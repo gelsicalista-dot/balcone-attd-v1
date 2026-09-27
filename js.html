@@ -1,0 +1,1936 @@
+<script>
+  const API_URL = "https://script.google.com/macros/s/AKfycbyvLbxeychgT9aI9PKCwoqQxNE-HnbCQmvkH5tMKdZc3OKwc4VTsdPJTMB2juOFec62wQ/exec";
+
+  let currentUser = null;
+  let html5QrcodeScanner = null;
+  let currentAttendanceAction = 'MASUK';
+  let currentAnnouncementsList = [];
+  let currentPayrollData = [];
+  let autoPollingInterval = null;
+  let leafletMap = null;
+  let leafletMarker = null;
+  let leafletCircle = null;
+
+  let isPayrollUnlocked = false;
+  let currentEmpRosterMonthStr = null;
+
+  function runBackend(functionName, argsArray, successCallback, errorCallback) {
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      let runner = google.script.run
+        .withSuccessHandler(function(res) {
+          if (successCallback) successCallback(res);
+        })
+        .withFailureHandler(function(err) {
+          if (errorCallback) errorCallback(err);
+          else showToast('System Error: ' + (err.message || err), 'error');
+        });
+      
+      if (runner[functionName]) {
+        runner[functionName].apply(runner, argsArray);
+        return;
+      }
+    }
+
+    fetch(API_URL, {
+      method: 'POST',
+      mode: 'cors',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: functionName, payload: argsArray || [] })
+    })
+    .then(res => {
+      if (!res.ok) {
+        throw new Error('HTTP status ' + res.status);
+      }
+      return res.json();
+    })
+    .then(data => { if (successCallback) successCallback(data); })
+    .catch(err => {
+      if (errorCallback) errorCallback(err);
+      else showToast('Koneksi API Gagal: Pastikan deployment Web App diset "Me" & "Anyone".', 'error');
+    });
+  }
+
+  function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    const msgSpan = document.getElementById('toast-message');
+    const icon = document.getElementById('toast-icon');
+
+    msgSpan.innerText = message;
+    if (type === 'success') {
+      icon.className = 'fa-solid fa-circle-check text-emerald-400';
+    } else if (type === 'error') {
+      icon.className = 'fa-solid fa-triangle-exclamation text-rose-400';
+    } else {
+      icon.className = 'fa-solid fa-circle-info text-blue-400';
+    }
+
+    toast.classList.remove('hidden');
+    setTimeout(() => { toast.classList.add('hidden'); }, 3500);
+  }
+
+  function formatRupiah(num) {
+    return 'Rp ' + Number(num || 0).toLocaleString('id-ID');
+  }
+
+  // Helper fungsi untuk mendeteksi bulan periode cut-off aktif (Tanggal 26 s/d 25)
+  function getActiveCutoffMonthStr() {
+    const today = new Date();
+    let year = today.getFullYear();
+    let month = today.getMonth() + 1;
+    if (today.getDate() >= 26) {
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+    }
+    return year + '-' + String(month).padStart(2, '0');
+  }
+
+  function parseDateStrToDate(dateStr) {
+    if (!dateStr) return new Date();
+    const parts = dateStr.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    }
+    return new Date(dateStr);
+  }
+
+  function handleLogin(e) {
+    e.preventDefault();
+    const phoneInput = document.getElementById('login-phone').value;
+    const passInput = document.getElementById('login-password').value;
+    const btn = document.getElementById('btn-login');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';
+
+    runBackend('loginUser', [phoneInput, passInput], function(res) {
+      btn.disabled = false;
+      btn.innerHTML = '<span>Masuk Sistem</span> <i class="fa-solid fa-arrow-right"></i>';
+
+      if (res.success) {
+        currentUser = res.user;
+        showToast('Selamat datang, ' + currentUser.nama + '!', 'success');
+
+        document.getElementById('view-login').classList.add('hidden');
+
+        if (currentUser.role === 'Admin HR') {
+          document.getElementById('view-admin').classList.remove('hidden');
+          switchAdminTab('dashboard');
+          loadAdminDashboard();
+        } else {
+          document.getElementById('view-karyawan').classList.remove('hidden');
+          if (currentUser.role === 'HOD') {
+            document.getElementById('emp-role-badge').innerText = 'HOD';
+            document.getElementById('emp-role-badge').classList.remove('hidden');
+            document.getElementById('hod-manager-panel').classList.remove('hidden');
+            loadHODDashboardData();
+          } else {
+            document.getElementById('emp-role-badge').classList.add('hidden');
+            document.getElementById('hod-manager-panel').classList.add('hidden');
+          }
+          loadKaryawanDashboard();
+        }
+        startAutoPolling();
+      } else {
+        showToast(res.message, 'error');
+      }
+    });
+  }
+
+  function logout() {
+    stopAutoPolling();
+    currentUser = null;
+    isPayrollUnlocked = false;
+    document.getElementById('view-karyawan').classList.add('hidden');
+    document.getElementById('view-admin').classList.add('hidden');
+    document.getElementById('view-login').classList.remove('hidden');
+    showToast('Berhasil keluar dari sistem.', 'info');
+  }
+
+  function startAutoPolling() {
+    stopAutoPolling();
+    autoPollingInterval = setInterval(() => {
+      if (!currentUser) return;
+      if (currentUser.role === 'Admin HR') {
+        loadAdminDashboard(true);
+      } else {
+        loadKaryawanDashboard(true);
+        if (currentUser.role === 'HOD') {
+          loadHODDashboardData(true);
+        }
+      }
+    }, 10000);
+  }
+
+  function stopAutoPolling() {
+    if (autoPollingInterval) clearInterval(autoPollingInterval);
+  }
+
+  function manualRefreshData() {
+    if (!currentUser) return;
+    showToast('Memperbarui data...', 'info');
+    if (currentUser.role === 'Admin HR') {
+      loadAdminDashboard();
+      const activeTab = document.querySelector('[id^="tab-admin-"]:not(.hidden)');
+      if (activeTab) {
+        const tabId = activeTab.id.replace('tab-admin-', '');
+        if (tabId === 'roster') fetchRosterData();
+        else if (tabId === 'payroll') loadPayrollCalculation();
+        else if (tabId === 'shift-dept') loadShiftDeptData();
+        else if (tabId === 'global-absensi') fetchGlobalAttendance(1);
+        else if (tabId === 'kpi') loadKPI();
+      }
+    } else {
+      loadKaryawanDashboard();
+      if (currentUser.role === 'HOD') {
+        loadHODDashboardData();
+      }
+    }
+  }
+
+  function switchAdminTab(tabName) {
+    const tabs = [
+      'dashboard', 'payroll', 'roster', 'approval-karyawan', 
+      'shift-dept', 'mading', 'global-absensi', 'kpi', 'settings'
+    ];
+
+    tabs.forEach(t => {
+      const tabElem = document.getElementById('tab-admin-' + t);
+      const navElem = document.getElementById('nav-' + t);
+      if (tabElem) tabElem.classList.add('hidden');
+      if (navElem) {
+        if (t === 'payroll') {
+          navElem.className = "w-full text-left px-4 py-3 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-xl flex items-center justify-between";
+        } else {
+          navElem.className = "w-full text-left px-4 py-3 text-xs font-semibold text-gray-600 flex items-center gap-3";
+        }
+      }
+    });
+
+    const targetTab = document.getElementById('tab-admin-' + tabName);
+    const targetNav = document.getElementById('nav-' + tabName);
+    if (targetTab) targetTab.classList.remove('hidden');
+    if (targetNav && tabName !== 'payroll') {
+      targetNav.className = "w-full text-left px-4 py-3 text-xs font-semibold text-gray-600 flex items-center gap-3 nav-pill-active";
+    }
+
+    if (tabName === 'roster') fetchRosterData();
+    else if (tabName === 'shift-dept') loadShiftDeptData();
+    else if (tabName === 'global-absensi') fetchGlobalAttendance(1);
+    else if (tabName === 'kpi') loadKPI();
+    else if (tabName === 'settings') loadOfficeSettings();
+  }
+
+  function openPayrollGatekeeper() {
+    if (isPayrollUnlocked) {
+      switchAdminTab('payroll');
+      switchPayrollSubtab('kalkulasi');
+    } else {
+      document.getElementById('input-payroll-pin').value = '';
+      document.getElementById('modal-payroll-pin').classList.remove('hidden');
+    }
+  }
+
+  function closePayrollPinModal() {
+    document.getElementById('modal-payroll-pin').classList.add('hidden');
+  }
+
+  function submitPayrollPin() {
+    const pin = document.getElementById('input-payroll-pin').value;
+    if (!pin || pin.length < 6) {
+      showToast('Masukkan 6 digit PIN Payroll.', 'error');
+      return;
+    }
+
+    runBackend('verifyPayrollPIN', [pin], function(res) {
+      if (res.success) {
+        isPayrollUnlocked = true;
+        closePayrollPinModal();
+        showToast('Modul Payroll Berhasil Dibuka!', 'success');
+        switchAdminTab('payroll');
+        switchPayrollSubtab('kalkulasi');
+      } else {
+        showToast(res.message, 'error');
+      }
+    });
+  }
+
+  function switchPayrollSubtab(subName) {
+    const subs = ['kalkulasi', 'master', 'pinjaman'];
+    subs.forEach(s => {
+      const elem = document.getElementById('payroll-subtab-' + s);
+      const nav = document.getElementById('subnav-' + s);
+      if (elem) elem.classList.add('hidden');
+      if (nav) nav.className = "p-3 rounded-xl border text-xs font-bold text-gray-600 bg-gray-50 text-center";
+    });
+
+    const targetElem = document.getElementById('payroll-subtab-' + subName);
+    const targetNav = document.getElementById('subnav-' + subName);
+    if (targetElem) targetElem.classList.remove('hidden');
+    if (targetNav) targetNav.className = "p-3 rounded-xl border text-xs font-bold text-blue-900 bg-blue-50 text-center";
+
+    if (subName === 'kalkulasi') loadPayrollCalculation();
+    else if (subName === 'master') loadSalaryMasterData();
+    else if (subName === 'pinjaman') loadLoansList();
+  }
+
+  function loadPayrollCalculation() {
+    const picker = document.getElementById('payroll-month-picker');
+    if (!picker.value) {
+      picker.value = getActiveCutoffMonthStr();
+    }
+
+    runBackend('calculateMonthlyPayroll', [picker.value], function(res) {
+      if (res.success) {
+        currentPayrollData = res.data;
+        const tbody = document.getElementById('table-payroll-calculation');
+        tbody.innerHTML = '';
+
+        res.data.forEach((p, idx) => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50 text-[11px]';
+          tr.innerHTML = '<td class="p-3 font-bold"><div class="text-blue-900">' + p.nik + '</div><div>' + p.nama + '</div></td>' +
+            '<td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900">' + p.status_karyawan + '</span></td>' +
+            '<td class="p-3 text-center font-bold text-emerald-700">' + p.total_hadir + ' Hr</td>' +
+            '<td class="p-3 text-center font-bold text-rose-600">' + p.total_menit_terlambat + ' mnt</td>' +
+            '<td class="p-3 text-right font-mono font-bold text-gray-800">' + formatRupiah(p.gaji_pokok) + '</td>' +
+            '<td class="p-3 text-right font-mono text-emerald-700">' + formatRupiah(p.tunjangan) + '</td>' +
+            '<td class="p-3 text-right font-mono text-rose-600">' + formatRupiah(p.denda_terlambat) + '</td>' +
+            '<td class="p-3 text-right font-mono text-rose-600">' + formatRupiah(p.bpjs_tk) + '</td>' +
+            '<td class="p-3 text-right font-mono text-rose-600">' + formatRupiah(p.bpjs_kes) + '</td>' +
+            '<td class="p-3 text-right font-mono text-rose-600">' + formatRupiah(p.potongan_pinjaman) + '</td>' +
+            '<td class="p-3 text-right font-mono font-extrabold text-blue-900">' + formatRupiah(p.thp_bersih) + '</td>' +
+            '<td class="p-3 text-center">' +
+            '<button onclick="viewAdminPayslip(' + idx + ')" class="px-2.5 py-1 bg-emerald-50 text-emerald-800 font-bold hover:bg-emerald-100 rounded-lg text-[10px]"><i class="fa-solid fa-print mr-1"></i>Slip</button>' +
+            '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  }
+
+  function downloadPayrollExcel() {
+    if (!currentPayrollData || currentPayrollData.length === 0) {
+      showToast('Data Payroll belum dimuat.', 'error');
+      return;
+    }
+    const picker = document.getElementById('payroll-month-picker').value;
+    const rows = currentPayrollData.map(p => ({
+      "NIK": p.nik,
+      "Nama Karyawan": p.nama,
+      "Departemen": p.departemen,
+      "Jabatan": p.jabatan,
+      "Status": p.status_karyawan,
+      "Hadir (Hari)": p.total_hadir,
+      "Terlambat (Menit)": p.total_menit_terlambat,
+      "Gaji Pokok": p.gaji_pokok,
+      "Tunjangan": p.tunjangan,
+      "Denda Late": p.denda_terlambat,
+      "BPJS TK": p.bpjs_tk,
+      "BPJS Kes": p.bpjs_kes,
+      "Potongan Kasbon": p.potongan_pinjaman,
+      "THP Bersih": p.thp_bersih,
+      "Status Bayar": p.status_bayar
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Rekap_Payroll");
+    XLSX.writeFile(wb, "Rekap_Payroll_Balcone_" + picker + ".xlsx");
+  }
+
+  function savePayrollRun() {
+    const picker = document.getElementById('payroll-month-picker').value;
+    if (!currentPayrollData || currentPayrollData.length === 0) {
+      showToast('Data Payroll belum siap disimpan.', 'error');
+      return;
+    }
+
+    if (confirm('Finalisasi & simpan data payroll periode ' + picker + '? Status bayar akan diubah menjadi Paid/Final.')) {
+      runBackend('savePayrollRun', [picker, currentPayrollData], function(res) {
+        if (res.success) {
+          showToast(res.message, 'success');
+          loadPayrollCalculation();
+        } else showToast(res.message, 'error');
+      });
+    }
+  }
+
+  function loadSalaryMasterData() {
+    runBackend('getSalaryMasterList', [], function(res) {
+      if (res.success) {
+        const tbody = document.getElementById('table-salary-master');
+        tbody.innerHTML = '';
+        res.data.forEach(s => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50 text-[11px]';
+          tr.innerHTML = '<td class="p-3 font-bold"><div class="text-blue-900">' + s.nik + '</div><div>' + s.nama + '</div></td>' +
+            '<td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900">' + s.status_karyawan + '</span>' + (s.status_kerja === 'Resign' ? ' <span class="bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded text-[9px] font-bold">Resign</span>' : '') + '</td>' +
+            '<td class="p-3 text-right font-mono font-bold">' + formatRupiah(s.gaji_pokok) + '</td>' +
+            '<td class="p-3 text-right font-mono">' + formatRupiah(s.tunjangan_jabatan) + '</td>' +
+            '<td class="p-3 text-right font-mono">' + formatRupiah(s.tunjangan_makan) + '</td>' +
+            '<td class="p-3 text-right font-mono">' + formatRupiah(s.tunjangan_transport) + '</td>' +
+            '<td class="p-3 text-center"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + (s.bpjs_tk_aktif === 'Ya' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600') + '">' + s.bpjs_tk_aktif + '</span></td>' +
+            '<td class="p-3 text-center"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + (s.bpjs_kes_aktif === 'Ya' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600') + '">' + s.bpjs_kes_aktif + '</span></td>' +
+            '<td class="p-3 text-center font-mono">' + formatRupiah(s.rate_denda_per_menit) + '</td>' +
+            '<td class="p-3 text-center flex justify-center gap-1.5">' +
+            '<button onclick="openModalSalaryMaster(\'' + s.nik + '\', \'' + s.nama + '\', ' + s.gaji_pokok + ', ' + s.tunjangan_jabatan + ', ' + s.tunjangan_makan + ', ' + s.tunjangan_transport + ', \'' + s.bpjs_tk_aktif + '\', \'' + s.bpjs_kes_aktif + '\', \'' + s.mode_prorate + '\', ' + s.rate_denda_per_menit + ')" class="text-blue-600 font-bold hover:underline">Edit Gaji</button>' +
+            '<button onclick="openModalSetResign(\'' + s.nik + '\', \'' + s.nama + '\', \'' + s.status_kerja + '\', \'' + s.tgl_resign + '\')" class="text-rose-600 font-bold hover:underline">Resign</button>' +
+            '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  }
+
+  function openModalSalaryMaster(nik, nama, gpokok, tjab, tmakan, ttrans, bpjsTk, bpjsKes, modePro, rateDenda) {
+    document.getElementById('salmaster-nik').value = nik;
+    document.getElementById('salmaster-emp-info').innerText = nik + ' • ' + nama;
+    document.getElementById('salmaster-gaji-pokok').value = gpokok || 0;
+    document.getElementById('salmaster-tunj-jabatan').value = tjab || 0;
+    document.getElementById('salmaster-tunj-makan').value = tmakan || 0;
+    document.getElementById('salmaster-tunj-transport').value = ttrans || 0;
+    document.getElementById('salmaster-bpjs-tk').value = bpjsTk || 'Ya';
+    document.getElementById('salmaster-bpjs-kes').value = bpjsKes || 'Ya';
+    document.getElementById('salmaster-mode-prorate').value = modePro || 'Otomatis';
+    document.getElementById('salmaster-rate-denda').value = rateDenda || 1000;
+
+    document.getElementById('modal-edit-salary-master').classList.remove('hidden');
+  }
+
+  function closeModalSalaryMaster() {
+    document.getElementById('modal-edit-salary-master').classList.add('hidden');
+  }
+
+  function handleSaveSalaryMasterSubmit(e) {
+    e.preventDefault();
+    const nik = document.getElementById('salmaster-nik').value;
+    const salaryData = {
+      gaji_pokok: document.getElementById('salmaster-gaji-pokok').value,
+      tunjangan_jabatan: document.getElementById('salmaster-tunj-jabatan').value,
+      tunjangan_makan: document.getElementById('salmaster-tunj-makan').value,
+      tunjangan_transport: document.getElementById('salmaster-tunj-transport').value,
+      bpjs_tk_aktif: document.getElementById('salmaster-bpjs-tk').value,
+      bpjs_kes_aktif: document.getElementById('salmaster-bpjs-kes').value,
+      mode_prorate: document.getElementById('salmaster-mode-prorate').value,
+      rate_denda_per_menit: document.getElementById('salmaster-rate-denda').value
+    };
+
+    runBackend('saveSalaryMaster', [nik, salaryData], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalSalaryMaster();
+        loadSalaryMasterData();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function openModalSetResign(nik, nama, statusKerja, tglResign) {
+    document.getElementById('resign-nik').value = nik;
+    document.getElementById('resign-emp-info').innerText = nik + ' • ' + nama;
+    document.getElementById('resign-status-kerja').value = statusKerja || 'Resign';
+    document.getElementById('resign-tanggal').value = tglResign || new Date().toISOString().split('T')[0];
+    
+    document.getElementById('modal-set-resign').classList.remove('hidden');
+  }
+
+  function closeModalSetResign() {
+    document.getElementById('modal-set-resign').classList.add('hidden');
+  }
+
+  function handleSetResignSubmit(e) {
+    e.preventDefault();
+    const nik = document.getElementById('resign-nik').value;
+    const statusKerja = document.getElementById('resign-status-kerja').value;
+    const tglResign = document.getElementById('resign-tanggal').value;
+
+    runBackend('setEmployeeResign', [nik, tglResign, statusKerja], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalSetResign();
+        loadSalaryMasterData();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function loadLoansList() {
+    runBackend('getLoansList', [], function(res) {
+      if (res.success) {
+        const tbody = document.getElementById('table-loans-list');
+        tbody.innerHTML = '';
+        res.data.forEach(l => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50 text-[11px]';
+          tr.innerHTML = '<td class="p-3 font-mono text-gray-500">' + l.id_pinjaman + '</td>' +
+            '<td class="p-3 font-bold"><div class="text-blue-900">' + l.nik + '</div><div>' + l.nama + '</div></td>' +
+            '<td class="p-3">' + l.tanggal_pinjam + '</td>' +
+            '<td class="p-3 text-right font-mono font-bold">' + formatRupiah(l.total_pinjaman) + '</td>' +
+            '<td class="p-3 text-right font-mono text-rose-600 font-bold">' + formatRupiah(l.cicilan_per_bulan) + '</td>' +
+            '<td class="p-3 text-right font-mono font-bold text-blue-900">' + formatRupiah(l.sisa_pinjaman) + '</td>' +
+            '<td class="p-3 text-center"><span class="px-2.5 py-1 rounded-full text-[10px] font-bold ' + (l.status_lunas === 'Lunas' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800') + '">' + l.status_lunas + '</span></td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  }
+
+  function openModalAddLoan() {
+    runBackend('getSalaryMasterList', [], function(res) {
+      if (res.success) {
+        const select = document.getElementById('loan-nik');
+        select.innerHTML = '';
+        res.data.forEach(emp => {
+          const opt = document.createElement('option');
+          opt.value = emp.nik;
+          opt.innerText = emp.nik + ' - ' + emp.nama + ' (' + emp.departemen + ')';
+          select.appendChild(opt);
+        });
+        document.getElementById('loan-total').value = '';
+        document.getElementById('loan-cicilan').value = '';
+        document.getElementById('loan-tanggal').value = new Date().toISOString().split('T')[0];
+        document.getElementById('modal-add-loan').classList.remove('hidden');
+      }
+    });
+  }
+
+  function closeModalAddLoan() {
+    document.getElementById('modal-add-loan').classList.add('hidden');
+  }
+
+  function handleSaveLoanSubmit(e) {
+    e.preventDefault();
+    const nik = document.getElementById('loan-nik').value;
+    const total = document.getElementById('loan-total').value;
+    const cicilan = document.getElementById('loan-cicilan').value;
+    const tgl = document.getElementById('loan-tanggal').value;
+
+    runBackend('saveLoan', [nik, total, cicilan, tgl], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalAddLoan();
+        loadLoansList();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function openModalUserPayslip() {
+    if (!currentUser) return;
+    const pickerVal = getActiveCutoffMonthStr();
+
+    showToast('Memuat slip gaji...', 'info');
+    runBackend('getPersonalPayslip', [currentUser.nik, pickerVal], function(res) {
+      if (res.success) {
+        renderPayslipModal(res.data);
+      } else {
+        showToast(res.message, 'error');
+      }
+    });
+  }
+
+  function viewAdminPayslip(idx) {
+    const item = currentPayrollData[idx];
+    if (item) {
+      renderPayslipModal(item);
+    }
+  }
+
+  function renderPayslipModal(p) {
+    document.getElementById('ps-bulan-tahun').innerText = 'PERIODE: ' + (p.bulan_tahun || 'LATEST');
+    document.getElementById('ps-emp-nama').innerText = p.nik + ' • ' + p.nama;
+    document.getElementById('ps-emp-dept').innerText = p.departemen + ' • ' + p.jabatan;
+    document.getElementById('ps-emp-status').innerText = p.status_karyawan;
+    document.getElementById('ps-emp-bank').innerText = (p.bank || 'Mandiri') + ' • ' + (p.no_rekening || '-');
+
+    document.getElementById('ps-earning-pokok').innerText = formatRupiah(p.gaji_pokok);
+    document.getElementById('ps-earning-tunjangan').innerText = formatRupiah(p.tunjangan);
+    const totalEarnings = (p.gaji_pokok || 0) + (p.tunjangan || 0) + (p.upah_lembur || 0) + (p.service_charge || 0);
+    document.getElementById('ps-earning-total').innerText = formatRupiah(totalEarnings);
+
+    document.getElementById('ps-ded-bpjstk').innerText = formatRupiah(p.bpjs_tk);
+    document.getElementById('ps-ded-bpjskes').innerText = formatRupiah(p.bpjs_kes);
+    document.getElementById('ps-ded-denda').innerText = formatRupiah(p.denda_terlambat);
+    document.getElementById('ps-ded-kasbon').innerText = formatRupiah(p.potongan_pinjaman);
+    const totalDeductions = (p.bpjs_tk || 0) + (p.bpjs_kes || 0) + (p.denda_terlambat || 0) + (p.potongan_pinjaman || 0);
+    document.getElementById('ps-ded-total').innerText = formatRupiah(totalDeductions);
+
+    document.getElementById('ps-thp-total').innerText = formatRupiah(p.thp_bersih);
+    document.getElementById('ps-status-bayar').innerText = p.status_bayar || 'PAID';
+    document.getElementById('ps-tgl-transfer').innerText = 'Tgl Transfer: ' + (p.tanggal_transfer || '-');
+
+    document.getElementById('modal-payslip-view').classList.remove('hidden');
+  }
+
+  function closeModalPayslipView() {
+    document.getElementById('modal-payslip-view').classList.add('hidden');
+  }
+
+  function loadAdminDashboard(isSilent = false) {
+    runBackend('getAdminDashboard', [], function(res) {
+      if (res.success) {
+        document.getElementById('stat-total-emp').innerText = res.stats.totalKaryawan;
+        document.getElementById('stat-hadir-today').innerText = res.stats.totalHadirToday;
+        document.getElementById('stat-late-today').innerText = res.stats.totalTerlambatToday;
+        document.getElementById('stat-pending-izin').innerText = res.stats.totalPendingIzin;
+
+        const badgeEmp = document.getElementById('badge-pending-emp');
+        if (res.stats.totalPendingKaryawan > 0) {
+          badgeEmp.innerText = res.stats.totalPendingKaryawan;
+          badgeEmp.classList.remove('hidden');
+        } else {
+          badgeEmp.classList.add('hidden');
+        }
+
+        const tbodyEditProfil = document.getElementById('table-pending-edit-profil');
+        tbodyEditProfil.innerHTML = '';
+        if (res.pendingEditProfil && res.pendingEditProfil.length > 0) {
+          res.pendingEditProfil.forEach(function(p) {
+            const tr = document.createElement('tr');
+            tr.className = 'border-b hover:bg-gray-50';
+            const pFoto = p.foto || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150';
+            tr.innerHTML = '<td class="p-3"><img src="' + pFoto + '" class="w-9 h-9 rounded-xl object-cover border"></td>' +
+              '<td class="p-3 font-bold text-blue-800">' + p.nik + '</td>' +
+              '<td class="p-3 font-semibold">' + p.nama + '</td>' +
+              '<td class="p-3">' + p.no_telp + '</td>' +
+              '<td class="p-3">' + (p.no_identitas || '-') + '</td>' +
+              '<td class="p-3">' + p.bank + ' • ' + p.no_rekening + '</td>' +
+              '<td class="p-3 text-center flex justify-center gap-2">' +
+              '<button onclick="approveEditProfil(\'' + p.id_pengajuan + '\', \'Approved\')" class="bg-emerald-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-emerald-700">Approve</button>' +
+              '<button onclick="approveEditProfil(\'' + p.id_pengajuan + '\', \'Rejected\')" class="bg-rose-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-rose-700">Reject</button>' +
+              '</td>';
+            tbodyEditProfil.appendChild(tr);
+          });
+        } else {
+          tbodyEditProfil.innerHTML = '<tr><td colspan="7" class="p-3 text-center text-gray-400">Tidak ada pengajuan edit profil pending.</td></tr>';
+        }
+
+        const tbodyKaryawan = document.getElementById('table-pending-karyawan');
+        tbodyKaryawan.innerHTML = '';
+        res.pendingKaryawan.forEach(function(k) {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          const empAvatar = k.foto || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150';
+          tr.innerHTML = '<td class="p-3"><img src="' + empAvatar + '" class="w-9 h-9 rounded-xl object-cover border"></td>' +
+            '<td class="p-3"><div class="font-bold text-blue-800">' + k.nik + '</div><div class="font-semibold">' + k.nama + '</div></td>' +
+            '<td class="p-3">' + k.no_telp + '</td>' +
+            '<td class="p-3">' + k.departemen + '</td>' +
+            '<td class="p-3"><span class="font-bold text-purple-900 bg-purple-50 px-2 py-0.5 rounded border">' + k.role + '</span> • ' + k.jabatan + '</td>' +
+            '<td class="p-3">' + (k.tgl_lahir || '-') + '</td>' +
+            '<td class="p-3">' + k.tgl_masuk + '</td>' +
+            '<td class="p-3 text-center flex justify-center gap-2">' +
+            '<button onclick="approveKaryawan(\'' + k.nik + '\', \'Approved\')" class="bg-emerald-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-emerald-700">Approve</button>' +
+            '<button onclick="approveKaryawan(\'' + k.nik + '\', \'Rejected\')" class="bg-rose-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-rose-700">Reject</button>' +
+            '</td>';
+          tbodyKaryawan.appendChild(tr);
+        });
+
+        const adminMadingContainer = document.getElementById('admin-mading-list');
+        adminMadingContainer.innerHTML = '';
+        res.announcements.forEach(function(m) {
+          const card = document.createElement('div');
+          card.className = 'card-saas p-4 flex flex-col justify-between border-l-4 ' + (m.status_aktif === 'Aktif' ? 'border-emerald-500' : 'border-gray-300');
+          card.innerHTML = '<div>' +
+            '<div class="flex justify-between items-center mb-2">' +
+            '<span class="text-[10px] text-gray-400 font-bold">' + m.tanggal_post + '</span>' +
+            '<span class="px-2 py-0.5 rounded-full text-[9px] font-bold ' + (m.status_aktif === 'Aktif' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600') + '">' + m.status_aktif + '</span>' +
+            '</div>' +
+            '<h4 class="font-bold text-xs text-gray-800 mb-1">' + m.judul + '</h4>' +
+            '<p class="text-xs text-gray-600 line-clamp-2 mb-3">' + m.isi_pengumuman + '</p>' +
+            '</div>' +
+            '<div class="flex justify-end gap-2 border-t pt-2 mt-2">' +
+            '<button onclick="openModalMading(\'' + m.id_pengumuman + '\', \'' + m.judul + '\', \'' + m.isi_pengumuman + '\', \'' + m.status_aktif + '\')" class="text-xs text-blue-700 font-bold hover:underline"><i class="fa-solid fa-pen mr-1"></i>Edit</button>' +
+            '<button onclick="deleteMading(\'' + m.id_pengumuman + '\')" class="text-xs text-rose-600 font-bold hover:underline"><i class="fa-solid fa-trash mr-1"></i>Hapus</button>' +
+            '</div>';
+          adminMadingContainer.appendChild(card);
+        });
+
+        const tbodyIzin = document.getElementById('table-pending-izin');
+        tbodyIzin.innerHTML = '';
+        if (res.pendingIzin && res.pendingIzin.length > 0) {
+          res.pendingIzin.forEach(function(item) {
+            const tr = document.createElement('tr');
+            tr.className = 'border-b hover:bg-gray-50';
+            tr.innerHTML = '<td class="p-3 font-semibold"><div class="text-blue-900 font-bold">' + item.nik + '</div><div>' + (item.nama || '-') + '</div></td>' +
+              '<td class="p-3"><span class="bg-purple-50 text-purple-900 font-semibold px-2 py-0.5 rounded border text-[10px]">' + (item.departemen || '-') + '</span></td>' +
+              '<td class="p-3 font-bold text-blue-800">' + item.jenis + '</td>' +
+              '<td class="p-3">' + item.tanggal_mulai + ' s/d ' + item.tanggal_selesai + '</td>' +
+              '<td class="p-3 text-center font-bold">' + item.jumlah_hari + ' hari</td>' +
+              '<td class="p-3">' + item.alasan + '</td>' +
+              '<td class="p-3 text-center flex justify-center gap-2">' +
+              '<button onclick="approveIzin(\'' + item.id_izin + '\', \'Approved\')" class="bg-emerald-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-emerald-700">Approve Final</button>' +
+              '<button onclick="openModalRejectReason(\'' + item.id_izin + '\')" class="bg-rose-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-rose-700">Reject</button>' +
+              '</td>';
+            tbodyIzin.appendChild(tr);
+          });
+        } else {
+          tbodyIzin.innerHTML = '<tr><td colspan="7" class="p-3 text-center text-gray-400">Tidak ada pengajuan cuti/izin pending HRD.</td></tr>';
+        }
+
+        const tbodyAllIzin = document.getElementById('table-all-izin-history');
+        tbodyAllIzin.innerHTML = '';
+        if (res.allIzin && res.allIzin.length > 0) {
+          res.allIzin.forEach(function(item) {
+            const tr = document.createElement('tr');
+            tr.className = 'border-b hover:bg-gray-50';
+            
+            let badgeBg = 'bg-amber-100 text-amber-800';
+            if (item.status_persetujuan === 'Approved') badgeBg = 'bg-emerald-100 text-emerald-800';
+            else if (item.status_persetujuan.includes('Rejected')) badgeBg = 'bg-rose-100 text-rose-800';
+            
+            tr.innerHTML = '<td class="p-3 font-semibold"><div class="text-blue-900 font-bold">' + item.nik + '</div><div>' + (item.nama || '-') + '</div></td>' +
+              '<td class="p-3"><span class="bg-purple-50 text-purple-900 font-semibold px-2 py-0.5 rounded border text-[10px]">' + (item.departemen || '-') + '</span></td>' +
+              '<td class="p-3 font-bold text-blue-800">' + item.jenis + '</td>' +
+              '<td class="p-3">' + item.tanggal_mulai + ' s/d ' + item.tanggal_selesai + '</td>' +
+              '<td class="p-3 text-center font-bold">' + item.jumlah_hari + ' hari</td>' +
+              '<td class="p-3">' + item.alasan + (item.alasan_penolakan ? ' <span class="text-rose-600 font-bold block mt-0.5">(Alasan Tolak: ' + item.alasan_penolakan + ')</span>' : '') + '</td>' +
+              '<td class="p-3 text-center"><span class="px-2.5 py-1 rounded-full text-[10px] font-bold ' + badgeBg + '">' + item.status_persetujuan + '</span></td>';
+            tbodyAllIzin.appendChild(tr);
+          });
+        } else {
+          tbodyAllIzin.innerHTML = '<tr><td colspan="7" class="p-3 text-center text-gray-400">Belum ada riwayat pengajuan izin/cuti.</td></tr>';
+        }
+      }
+    });
+  }
+
+  function openModalMading(id, judul, isi, status) {
+    if (id) {
+      document.getElementById('mading-id').value = id;
+      document.getElementById('mading-judul').value = judul;
+      document.getElementById('mading-isi').value = isi;
+      document.getElementById('mading-status').value = status;
+    } else {
+      document.getElementById('mading-id').value = '';
+      document.getElementById('mading-judul').value = '';
+      document.getElementById('mading-isi').value = '';
+      document.getElementById('mading-status').value = 'Aktif';
+    }
+    document.getElementById('mading-foto-file').value = '';
+    document.getElementById('modal-mading').classList.remove('hidden');
+  }
+
+  function closeModalMading() {
+    document.getElementById('modal-mading').classList.add('hidden');
+  }
+
+  function handleMadingSubmit(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-submit-mading');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';
+
+    const id = document.getElementById('mading-id').value;
+    const judul = document.getElementById('mading-judul').value;
+    const isi = document.getElementById('mading-isi').value;
+    const status = document.getElementById('mading-status').value;
+    const fileInput = document.getElementById('mading-foto-file');
+
+    const processSave = (fotoBase64) => {
+      runBackend('savePengumuman', [id, judul, isi, status, fotoBase64], function(res) {
+        btn.disabled = false;
+        btn.innerHTML = 'Simpan Mading';
+        if (res.success) {
+          showToast(res.message, 'success');
+          closeModalMading();
+          loadAdminDashboard();
+        } else {
+          showToast(res.message, 'error');
+        }
+      }, function(err) {
+        btn.disabled = false;
+        btn.innerHTML = 'Simpan Mading';
+        showToast('Gagal menyimpan Mading: ' + (err.message || err), 'error');
+      });
+    };
+
+    if (fileInput.files && fileInput.files[0]) {
+      const reader = new FileReader();
+      reader.onload = function(evt) { processSave(evt.target.result); };
+      reader.readAsDataURL(fileInput.files[0]);
+    } else {
+      processSave('');
+    }
+  }
+
+  function deleteMading(id) {
+    if (confirm('Hapus pengumuman Mading ini?')) {
+      runBackend('deletePengumuman', [id], function(res) {
+        if (res.success) {
+          showToast(res.message, 'success');
+          loadAdminDashboard();
+        } else showToast(res.message, 'error');
+      });
+    }
+  }
+
+  function openModalDetailMading(idx) {
+    const item = currentAnnouncementsList[idx];
+    if (!item) return;
+
+    document.getElementById('md-detail-judul').innerText = item.judul;
+    document.getElementById('md-detail-tanggal').innerHTML = '<i class="fa-solid fa-calendar mr-1"></i> ' + item.tanggal_post;
+    document.getElementById('md-detail-pembuat').innerHTML = '<i class="fa-solid fa-user-pen mr-1"></i> ' + item.pembuat;
+    document.getElementById('md-detail-isi').innerText = item.isi_pengumuman;
+    
+    const fotoElem = document.getElementById('md-detail-foto');
+    fotoElem.src = item.foto_pengumuman || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=600';
+    fotoElem.onerror = function() { this.src = 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=600'; };
+
+    document.getElementById('modal-mading-detail').classList.remove('hidden');
+  }
+
+  function closeModalDetailMading() {
+    document.getElementById('modal-mading-detail').classList.add('hidden');
+  }
+
+  function downloadMadingImage(e) {
+    if (e) e.preventDefault();
+    const imgElem = document.getElementById('md-detail-foto');
+    const src = imgElem ? imgElem.src : '';
+    if (!src) {
+      showToast('Foto tidak tersedia untuk diunduh.', 'error');
+      return;
+    }
+
+    const judul = document.getElementById('md-detail-judul').innerText || 'Mading_Balcone';
+    const cleanTitle = judul.replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = 'Mading_Balcone_' + cleanTitle + '.jpg';
+
+    if (src.startsWith('data:image')) {
+      const link = document.createElement('a');
+      link.href = src;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('Foto Mading berhasil diunduh!', 'success');
+    } else {
+      showToast('Mengunduh foto mading...', 'info');
+      fetch(src)
+        .then(res => res.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+          showToast('Foto Mading berhasil diunduh!', 'success');
+        })
+        .catch(() => {
+          window.open(src, '_blank');
+          showToast('Membuka foto di tab baru...', 'info');
+        });
+    }
+  }
+
+  function openModalRejectReason(idIzin) {
+    document.getElementById('reject-target-id').value = idIzin;
+    document.getElementById('reject-reason-input').value = '';
+    document.getElementById('modal-reject-reason').classList.remove('hidden');
+  }
+
+  function closeModalRejectReason() {
+    document.getElementById('modal-reject-reason').classList.add('hidden');
+  }
+
+  function confirmSubmitRejection() {
+    const idIzin = document.getElementById('reject-target-id').value;
+    const reason = document.getElementById('reject-reason-input').value;
+
+    if (!reason) {
+      showToast('Tuliskan alasan penolakan terlebih dahulu.', 'error');
+      return;
+    }
+
+    approveIzin(idIzin, 'Rejected', reason);
+    closeModalRejectReason();
+  }
+
+  function openModalIzin() {
+    document.getElementById('modal-izin').classList.remove('hidden');
+  }
+
+  function closeModalIzin() {
+    document.getElementById('modal-izin').classList.add('hidden');
+  }
+
+  function handleIzinSubmit(e) {
+    e.preventDefault();
+    runBackend('submitIzinCuti', [
+      currentUser.nik,
+      document.getElementById('izin-tgl-mulai').value,
+      document.getElementById('izin-tgl-selesai').value,
+      document.getElementById('izin-jumlah').value,
+      document.getElementById('izin-jenis').value,
+      document.getElementById('izin-alasan').value
+    ], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalIzin();
+        loadKaryawanDashboard();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function approveIzin(idIzin, status, rejectionReason) {
+    runBackend('approveIzinCuti', [idIzin, status, rejectionReason], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        loadAdminDashboard();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function openModalEditProfil() {
+    if (!currentUser) return;
+    document.getElementById('edit-nama').value = currentUser.nama;
+    document.getElementById('edit-phone').value = currentUser.no_telp;
+    document.getElementById('edit-no-identitas').value = currentUser.no_identitas || '';
+    document.getElementById('edit-status-kawin').value = currentUser.status_kawin || 'TK/0';
+    document.getElementById('edit-bank').value = currentUser.bank || 'Mandiri';
+    document.getElementById('edit-no-rekening').value = currentUser.no_rekening || '';
+    document.getElementById('edit-alamat').value = currentUser.alamat || '';
+    document.getElementById('edit-foto-base64').value = '';
+    document.getElementById('edit-foto-file').value = '';
+
+    document.getElementById('modal-edit-profil').classList.remove('hidden');
+  }
+
+  function closeModalEditProfil() {
+    document.getElementById('modal-edit-profil').classList.add('hidden');
+  }
+
+  function previewEditFoto(e) {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        document.getElementById('edit-foto-base64').value = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function handleEditProfilSubmit(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-submit-edit-profil');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';
+
+    const payload = {
+      nama: document.getElementById('edit-nama').value,
+      no_telp: document.getElementById('edit-phone').value,
+      no_identitas: document.getElementById('edit-no-identitas').value,
+      status_kawin: document.getElementById('edit-status-kawin').value,
+      bank: document.getElementById('edit-bank').value,
+      no_rekening: document.getElementById('edit-no-rekening').value,
+      alamat: document.getElementById('edit-alamat').value,
+      foto: document.getElementById('edit-foto-base64').value,
+      current_foto: currentUser.foto
+    };
+
+    runBackend('submitEditProfil', [currentUser.nik, payload], function(res) {
+      btn.disabled = false;
+      btn.innerHTML = '<span>Kirim Pengajuan Edit</span>';
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalEditProfil();
+      } else {
+        showToast(res.message, 'error');
+      }
+    }, function(err) {
+      btn.disabled = false;
+      btn.innerHTML = '<span>Kirim Pengajuan Edit</span>';
+      showToast('Gagal mengajukan edit profil: ' + (err.message || err), 'error');
+    });
+  }
+
+  function approveEditProfil(idPengajuan, actionStatus) {
+    runBackend('approveEditProfil', [idPengajuan, actionStatus], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        loadAdminDashboard();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function openModalRegister() {
+    runBackend('getDepartemenList', [], function(res) {
+      if (res.success) {
+        const select = document.getElementById('reg-departemen');
+        select.innerHTML = '';
+        res.data.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.nama_departemen;
+          opt.innerText = d.nama_departemen;
+          select.appendChild(opt);
+        });
+        document.getElementById('modal-register').classList.remove('hidden');
+      }
+    });
+  }
+
+  function closeModalRegister() {
+    document.getElementById('modal-register').classList.add('hidden');
+  }
+
+  function handleRegisterSubmit(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-submit-register');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';
+
+    const fileInput = document.getElementById('reg-foto-file');
+    const processForm = (fotoBase64) => {
+      const payload = {
+        nama: document.getElementById('reg-nama').value,
+        no_telp: document.getElementById('reg-phone').value,
+        password: document.getElementById('reg-password').value,
+        role: document.getElementById('reg-role').value,
+        status_karyawan: document.getElementById('reg-status-karyawan').value,
+        departemen: document.getElementById('reg-departemen').value,
+        jabatan: document.getElementById('reg-jabatan').value,
+        no_identitas: document.getElementById('reg-no-identitas').value,
+        tgl_masuk: document.getElementById('reg-tgl-masuk').value,
+        tgl_lahir: document.getElementById('reg-tgl-lahir').value,
+        status_kawin: document.getElementById('reg-status-kawin').value,
+        bank: document.getElementById('reg-bank').value,
+        no_rekening: document.getElementById('reg-no-rekening').value,
+        alamat: document.getElementById('reg-alamat').value,
+        foto: fotoBase64 || ''
+      };
+
+      runBackend('registerKaryawan', [payload], function(res) {
+        btn.disabled = false;
+        btn.innerHTML = '<span>Kirim Pendaftaran</span>';
+        if (res.success) {
+          showToast(res.message, 'success');
+          closeModalRegister();
+        } else showToast(res.message, 'error');
+      });
+    };
+
+    if (fileInput.files && fileInput.files[0]) {
+      const reader = new FileReader();
+      reader.onload = function(evt) { processForm(evt.target.result); };
+      reader.readAsDataURL(fileInput.files[0]);
+    } else {
+      processForm('');
+    }
+  }
+
+  function approveKaryawan(nik, status) {
+    runBackend('approveKaryawan', [nik, status], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        loadAdminDashboard();
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function openQRScanner(action) {
+    currentAttendanceAction = action;
+    document.getElementById('modal-qr').classList.remove('hidden');
+    document.getElementById('qr-loading').classList.remove('hidden');
+
+    setTimeout(() => {
+      html5QrcodeScanner = new Html5Qrcode("qr-reader");
+      html5QrcodeScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        onScanSuccess,
+        () => {}
+      ).then(() => {
+        document.getElementById('qr-loading').classList.add('hidden');
+      }).catch(() => {
+        showToast('Kamera tidak dapat diakses!', 'error');
+        closeQRScanner();
+      });
+    }, 500);
+  }
+
+  function closeQRScanner() {
+    if (html5QrcodeScanner) {
+      html5QrcodeScanner.stop().then(() => {
+        html5QrcodeScanner.clear();
+        html5QrcodeScanner = null;
+      }).catch(() => {});
+    }
+    document.getElementById('modal-qr').classList.add('hidden');
+  }
+
+  function onScanSuccess(decodedText) {
+    closeQRScanner();
+    showToast('Mengambil lokasi GPS...', 'info');
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        const lat = pos.coords.latitude;
+        const long = pos.coords.longitude;
+
+        runBackend('processAbsensi', [currentUser.nik, lat, long, decodedText, currentAttendanceAction], function(res) {
+          if (res.success) {
+            showToast(res.message, 'success');
+            loadKaryawanDashboard();
+          } else {
+            showToast(res.message, 'error');
+          }
+        });
+      }, function() {
+        showToast('Akses GPS ditolak! Aktifkan lokasi HP Anda.', 'error');
+      }, { enableHighAccuracy: true });
+    } else {
+      showToast('Browser Anda tidak mendukung Geolocation GPS.', 'error');
+    }
+  }
+
+  function changeEmpRosterCycle(offset) {
+    if (!currentEmpRosterMonthStr) {
+      currentEmpRosterMonthStr = getActiveCutoffMonthStr();
+    }
+    const parts = currentEmpRosterMonthStr.split('-');
+    let year = parseInt(parts[0], 10);
+    let month = parseInt(parts[1], 10) + offset;
+
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    } else if (month < 1) {
+      month = 12;
+      year -= 1;
+    }
+
+    currentEmpRosterMonthStr = year + '-' + String(month).padStart(2, '0');
+    showToast('Memuat roster periode ' + currentEmpRosterMonthStr + '...', 'info');
+    loadKaryawanDashboard(false, currentEmpRosterMonthStr);
+  }
+
+  function loadKaryawanDashboard(isSilent = false, targetMonth = null) {
+    document.getElementById('emp-nama').innerText = currentUser.nama;
+    document.getElementById('emp-nik-badge').innerText = currentUser.nik;
+    document.getElementById('emp-dept-role').innerText = currentUser.departemen + ' • ' + currentUser.jabatan;
+    document.getElementById('emp-sisa-cuti').innerText = 'Sisa Cuti: ' + currentUser.sisa_cuti_tahunan + ' Hari';
+    document.getElementById('emp-avatar').src = currentUser.foto || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150';
+
+    if (!currentEmpRosterMonthStr) {
+      currentEmpRosterMonthStr = getActiveCutoffMonthStr();
+    }
+    const reqMonth = targetMonth || currentEmpRosterMonthStr;
+
+    const monthLabelElem = document.getElementById('emp-roster-month-label');
+    if (monthLabelElem) {
+      monthLabelElem.innerText = reqMonth;
+    }
+
+    runBackend('getKaryawanDashboard', [currentUser.nik, reqMonth], function(res) {
+      if (res.success) {
+        document.getElementById('emp-roster-shift').innerText = 'Jadwal Shift: ' + (res.todayShiftInfo || 'Standard');
+
+        const statusElem = document.getElementById('emp-status-today');
+        if (res.todayRecord) {
+          if (res.todayRecord.jam_pulang !== '') {
+            statusElem.innerText = 'Status: Sudah Pulang (' + res.todayRecord.jam_pulang + ')';
+            statusElem.className = 'text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full font-medium';
+          } else {
+            statusElem.innerText = 'Status: Hadir (' + res.todayRecord.jam_masuk + ')';
+            statusElem.className = 'text-xs bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full font-medium';
+          }
+        } else {
+          statusElem.innerText = 'Status: Belum Absen';
+          statusElem.className = 'text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-full font-medium';
+        }
+
+        currentAnnouncementsList = res.announcements || [];
+        const madingContainer = document.getElementById('mading-feed-container');
+        madingContainer.innerHTML = '';
+        
+        if (currentAnnouncementsList.length > 0) {
+          currentAnnouncementsList.forEach(function(m, idx) {
+            const card = document.createElement('div');
+            card.className = 'bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between space-y-3';
+            card.onclick = function() { openModalDetailMading(idx); };
+            const mFoto = m.foto_pengumuman || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=600';
+            card.innerHTML = '<div>' +
+              '<div class="w-full max-h-56 bg-gray-900/5 rounded-xl mb-3 border overflow-hidden flex items-center justify-center">' +
+              '<img src="' + mFoto + '" class="w-full max-h-56 object-contain rounded-xl" onerror="this.src=\'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=600\'">' +
+              '</div>' +
+              '<div class="flex justify-between items-center text-[10px] text-gray-400 font-semibold mb-1">' +
+              '<span><i class="fa-solid fa-calendar mr-1"></i>' + m.tanggal_post + '</span>' +
+              '<span><i class="fa-solid fa-user-pen mr-1"></i>' + m.pembuat + '</span>' +
+              '</div>' +
+              '<h4 class="font-bold text-xs text-gray-800 line-clamp-1">' + m.judul + '</h4>' +
+              '<p class="text-xs text-gray-500 line-clamp-2 mt-1 whitespace-pre-line">' + m.isi_pengumuman + '</p>' +
+              '</div>' +
+              '<div class="text-[11px] font-bold text-blue-800 flex items-center justify-between pt-2 border-t">' +
+              '<span>Baca Detail & Unduh Foto</span> <i class="fa-solid fa-arrow-right text-[10px]"></i>' +
+              '</div>';
+            madingContainer.appendChild(card);
+          });
+        } else {
+          madingContainer.innerHTML = '<div class="col-span-2 text-center p-6 text-gray-400 text-xs">Belum ada pengumuman mading aktif.</div>';
+        }
+
+        const leaveHistoryList = document.getElementById('leave-history-list');
+        leaveHistoryList.innerHTML = '';
+        if (res.leaveHistory && res.leaveHistory.length > 0) {
+          res.leaveHistory.forEach(function(l) {
+            const item = document.createElement('div');
+            item.className = 'p-2.5 rounded-xl border bg-gray-50 flex items-center justify-between text-xs';
+            
+            let badgeBg = 'bg-amber-100 text-amber-800';
+            if (l.status_persetujuan === 'Approved') badgeBg = 'bg-emerald-100 text-emerald-800';
+            else if (l.status_persetujuan.includes('Rejected')) badgeBg = 'bg-rose-100 text-rose-800';
+
+            item.innerHTML = '<div>' +
+              '<p class="font-bold text-gray-800">' + l.jenis + ' (' + l.jumlah_hari + ' Hari)</p>' +
+              '<p class="text-[10px] text-gray-400">' + l.tanggal_mulai + ' s/d ' + l.tanggal_selesai + '</p>' +
+              '</div>' +
+              '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ' + badgeBg + '">' + l.status_persetujuan + '</span>';
+            leaveHistoryList.appendChild(item);
+          });
+        } else {
+          leaveHistoryList.innerHTML = '<p class="text-xs text-gray-400 text-center py-2">Belum ada riwayat pengajuan.</p>';
+        }
+
+        const histList = document.getElementById('personal-history-list');
+        histList.innerHTML = '';
+        res.history.forEach(function(h) {
+          const row = document.createElement('div');
+          row.className = 'p-3 rounded-xl border flex items-center justify-between text-xs bg-white';
+          row.innerHTML = '<div>' +
+            '<p class="font-bold text-gray-800">' + h.tanggal + '</p>' +
+            '<p class="text-[10px] text-gray-400">Masuk: ' + (h.jam_masuk || '-') + ' • Pulang: ' + (h.jam_pulang || '-') + '</p>' +
+            '</div>' +
+            '<span class="text-[10px] font-bold px-2 py-1 rounded-lg ' + (h.status === 'Tepat Waktu' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800') + '">' + h.status + '</span>';
+          histList.appendChild(row);
+        });
+
+        const personalRosterBody = document.getElementById('table-personal-roster');
+        if (personalRosterBody) {
+          personalRosterBody.innerHTML = '';
+          if (res.cutoffInfo) {
+            const subElem = document.getElementById('emp-roster-period-subtitle');
+            if (subElem) {
+              subElem.innerText = 'Periode Cut-Off: ' + res.cutoffInfo.startIso + ' s/d ' + res.cutoffInfo.endIso;
+            }
+          }
+
+          if (res.personalRoster && res.personalRoster.length > 0) {
+            const daysName = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+            
+            // Dapatkan tanggal hari ini dalam format YYYY-MM-DD
+            const now = new Date();
+            const todayIso = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+            let todayRowElem = null;
+
+            res.personalRoster.forEach(r => {
+              const tr = document.createElement('tr');
+              const isToday = (r.tanggal === todayIso);
+
+              if (isToday) {
+                tr.className = 'border-b bg-blue-50/90 border-l-4 border-l-blue-600 text-xs font-bold shadow-sm';
+                tr.id = 'roster-row-today';
+                todayRowElem = tr;
+              } else {
+                tr.className = 'border-b hover:bg-gray-50 text-xs';
+              }
+              
+              const rDate = parseDateStrToDate(r.tanggal);
+              const dayName = daysName[rDate.getDay()] || '';
+              let dateDisplay = dayName + ', ' + r.tanggal;
+
+              if (isToday) {
+                dateDisplay += ' <span class="ml-2 px-2 py-0.5 text-[9px] font-extrabold bg-blue-600 text-white rounded-full shadow-sm inline-flex items-center gap-1"><i class="fa-solid fa-star text-[8px]"></i> Hari Ini</span>';
+              }
+
+              const shiftVal = r.id_shift || r.status_hari;
+              let badgeClass = 'bg-blue-100 text-blue-800';
+              if (shiftVal === 'OFF') badgeClass = 'bg-rose-100 text-rose-800';
+              else if (['CT', 'PH', 'EO', 'S', 'I'].includes(shiftVal)) badgeClass = 'bg-amber-100 text-amber-800';
+
+              tr.innerHTML = '<td class="p-3 font-semibold text-gray-800">' + dateDisplay + '</td>' +
+                '<td class="p-3 font-bold text-blue-900">' + (r.shift_nama || shiftVal) + '</td>' +
+                '<td class="p-3 font-mono text-gray-600">' + (r.shift_jam || '-') + '</td>' +
+                '<td class="p-3 text-center"><span class="px-2.5 py-1 rounded-full text-[10px] font-bold ' + badgeClass + '">' + shiftVal + '</span></td>';
+
+              personalRosterBody.appendChild(tr);
+            });
+
+            // Auto-scroll fokus ke baris jadwal hari ini
+            if (todayRowElem && !isSilent) {
+              setTimeout(() => {
+                todayRowElem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }, 300);
+            }
+          } else {
+            personalRosterBody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-400">Belum ada jadwal roster yang dibuat oleh HOD untuk periode ini.</td></tr>';
+          }
+        }
+      }
+    });
+  }
+
+  function loadHODDashboardData() {
+    if (!currentUser) return;
+    document.getElementById('hod-dept-subtitle').innerText = 'Departemen: ' + currentUser.departemen;
+
+    const picker = document.getElementById('hod-roster-month-picker');
+    if (!picker.value) {
+      picker.value = getActiveCutoffMonthStr();
+    }
+
+    runBackend('getHODDashboard', [currentUser.nik, currentUser.departemen], function(res) {
+      if (res.success) {
+        const tbodyIzin = document.getElementById('table-hod-pending-izin');
+        tbodyIzin.innerHTML = '';
+
+        if (res.pendingIzinHOD && res.pendingIzinHOD.length > 0) {
+          res.pendingIzinHOD.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.className = 'border-b hover:bg-purple-50/30';
+            tr.innerHTML = '<td class="p-2 font-bold text-gray-800">' + item.nama_karyawan + '</td>' +
+              '<td class="p-2 font-semibold text-purple-900">' + item.jenis + '</td>' +
+              '<td class="p-2 text-gray-500">' + item.tanggal_mulai + '</td>' +
+              '<td class="p-2 text-center flex justify-center gap-1">' +
+              '<button onclick="approveIzin(\'' + item.id_izin + '\', \'Approved\')" class="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">Approve</button>' +
+              '<button onclick="openModalRejectReason(\'' + item.id_izin + '\')" class="bg-rose-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">Reject</button>' +
+              '</td>';
+            tbodyIzin.appendChild(tr);
+          });
+        } else {
+          tbodyIzin.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-gray-400">Tidak ada pengajuan cuti staf pending HOD.</td></tr>';
+        }
+
+        const staffList = document.getElementById('hod-staff-list');
+        staffList.innerHTML = '';
+        res.deptEmployees.forEach(emp => {
+          const div = document.createElement('div');
+          div.className = 'p-2 rounded-xl border bg-gray-50 flex items-center justify-between';
+          const empFoto = emp.foto || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150';
+          div.innerHTML = '<div class="flex items-center gap-2">' +
+            '<img src="' + empFoto + '" class="w-7 h-7 rounded-lg object-cover border">' +
+            '<div><p class="font-bold text-gray-800 line-clamp-1">' + emp.nama + '</p><p class="text-[10px] text-gray-400">' + emp.nik + ' • ' + emp.jabatan + '</p></div>' +
+            '</div>' +
+            '<span class="text-[10px] bg-purple-100 text-purple-900 px-2 py-0.5 rounded-full font-bold">Sisa Cuti: ' + emp.sisa_cuti_tahunan + '</span>';
+          staffList.appendChild(div);
+        });
+
+        fetchHODRosterData();
+      }
+    });
+  }
+
+  function fetchHODRosterData() {
+    if (!currentUser) return;
+    const pickerVal = document.getElementById('hod-roster-month-picker').value;
+
+    runBackend('getRosterData', [pickerVal, currentUser.departemen], function(res) {
+      if (res.success) {
+        renderHODRosterTable(res);
+      }
+    });
+  }
+
+  function buildShiftDropdownOptions(shifts, currentVal) {
+    let options = '<option value="OFF" ' + (currentVal === 'OFF' ? 'selected' : '') + '>OFF</option>';
+    
+    if (shifts && shifts.length > 0) {
+      shifts.forEach(s => {
+        const label = (s.nama_shift || s.id_shift) + ' (' + (s.jam_masuk || '') + '-' + (s.jam_pulang || '') + ')';
+        options += '<option value="' + s.id_shift + '" ' + (currentVal === s.id_shift ? 'selected' : '') + '>' + label + '</option>';
+      });
+    } else {
+      options += '<option value="SFT-01" ' + (currentVal === 'SFT-01' ? 'selected' : '') + '>Pagi</option>';
+      options += '<option value="SFT-02" ' + (currentVal === 'SFT-02' ? 'selected' : '') + '>Middle</option>';
+      options += '<option value="SFT-03" ' + (currentVal === 'SFT-03' ? 'selected' : '') + '>Malam</option>';
+    }
+    
+    options += '<option value="CT" ' + (currentVal === 'CT' ? 'selected' : '') + '>CT (Cuti)</option>';
+    options += '<option value="PH" ' + (currentVal === 'PH' ? 'selected' : '') + '>PH (Publik Holiday)</option>';
+    options += '<option value="EO" ' + (currentVal === 'EO' ? 'selected' : '') + '>EO (Extra Off)</option>';
+    options += '<option value="S" ' + (currentVal === 'S' ? 'selected' : '') + '>S (Sakit)</option>';
+    options += '<option value="I" ' + (currentVal === 'I' ? 'selected' : '') + '>I (Izin)</option>';
+    return options;
+  }
+
+  function getShiftSelectBg(currentVal, shifts) {
+    if (currentVal === 'OFF') return 'bg-rose-50 text-rose-700 font-bold';
+    if (['CT', 'PH', 'EO', 'S', 'I'].includes(currentVal)) return 'bg-amber-50 text-amber-800 font-bold';
+    
+    const isCustomShift = shifts && shifts.some(s => s.id_shift === currentVal);
+    if (isCustomShift || (currentVal && currentVal.startsWith('SFT-'))) {
+      return 'bg-blue-50 text-blue-800 font-bold';
+    }
+    return 'bg-gray-100 text-gray-700';
+  }
+
+  function renderHODRosterTable(data) {
+    const headerRow = document.getElementById('hod-roster-table-header-row');
+    const tbody = document.getElementById('table-hod-roster-matrix');
+
+    headerRow.innerHTML = '<th class="p-2.5 sticky left-0 bg-purple-900 z-10 min-w-[140px]">NIK & Nama Staf</th>';
+    tbody.innerHTML = '';
+
+    const startDate = parseDateStrToDate(data.cutoff.startIso);
+    const endDate = parseDateStrToDate(data.cutoff.endIso);
+    const dateList = [];
+
+    let cur = new Date(startDate);
+    while (cur <= endDate) {
+      const iso = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+      const display = String(cur.getDate()).padStart(2, '0') + '/' + String(cur.getMonth() + 1).padStart(2, '0');
+      dateList.push({ iso: iso, display: display });
+      
+      const th = document.createElement('th');
+      th.className = 'p-2 text-center min-w-[70px] border-r border-purple-800';
+      th.innerText = display;
+      headerRow.appendChild(th);
+
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    data.karyawan.forEach(emp => {
+      const tr = document.createElement('tr');
+      tr.className = 'border-b hover:bg-purple-50/30 text-[11px]';
+
+      let nameTd = '<td class="p-2 font-bold sticky left-0 bg-white border-r z-10 shadow-sm">' +
+        '<div class="text-purple-900 line-clamp-1">' + emp.nik + '</div>' +
+        '<div class="text-gray-800 font-semibold line-clamp-1">' + emp.nama + '</div>' +
+        '</td>';
+
+      let daysTds = '';
+      dateList.forEach(d => {
+        const matched = data.roster.find(r => r.nik === emp.nik && r.tanggal === d.iso);
+        const currentVal = matched ? (matched.id_shift || matched.status_hari) : 'OFF';
+
+        daysTds += '<td class="p-1 text-center border-r">' +
+          '<select onchange="handleHODRosterCellChange(\'' + emp.nik + '\', \'' + d.iso + '\', this.value)" class="p-1 text-[10px] rounded-lg border-0 focus:ring-1 focus:ring-purple-800 ' + getShiftSelectBg(currentVal, data.shifts) + '">' +
+          buildShiftDropdownOptions(data.shifts, currentVal) +
+          '</select>' +
+          '</td>';
+      });
+
+      tr.innerHTML = nameTd + daysTds;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function handleHODRosterCellChange(nik, isoDate, val) {
+    runBackend('saveBulkRoster', [[{ nik: nik, tanggal: isoDate, id_shift: val, status_hari: val }]], function(res) {
+      if (res.success) showToast('Roster ' + nik + ' diperbarui', 'success');
+    });
+  }
+
+  function downloadHODExcelTemplate() {
+    const picker = document.getElementById('hod-roster-month-picker').value;
+    runBackend('getRosterData', [picker, currentUser.departemen], function(res) {
+      if (res.success) {
+        const startDate = parseDateStrToDate(res.cutoff.startIso);
+        const endDate = parseDateStrToDate(res.cutoff.endIso);
+        const dateCols = [];
+
+        let cur = new Date(startDate);
+        while (cur <= endDate) {
+          const iso = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+          dateCols.push(iso);
+          cur.setDate(cur.getDate() + 1);
+        }
+
+        const rows = res.karyawan.map(emp => {
+          let rowObj = { "NIK": emp.nik, "Nama Staf": emp.nama, "Departemen": emp.departemen };
+          dateCols.forEach(d => {
+            const matched = res.roster.find(r => r.nik === emp.nik && r.tanggal === d);
+            rowObj[d] = matched ? (matched.id_shift || matched.status_hari) : "OFF";
+          });
+          return rowObj;
+        });
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Roster_Dept");
+        XLSX.writeFile(wb, "Roster_Balcone_" + currentUser.departemen + "_" + picker + ".xlsx");
+      }
+    });
+  }
+
+  function handleHODRosterExcelUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      const data = new Uint8Array(evt.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+      let rosterItems = [];
+      jsonData.forEach(row => {
+        const nik = row["NIK"] || row["nik"];
+        if (nik) {
+          Object.keys(row).forEach(key => {
+            if (key.match(/^\d{4}-\d{2}-\d{2}$/)) {
+              rosterItems.push({ nik: nik, tanggal: key, id_shift: row[key], status_hari: row[key] });
+            }
+          });
+        }
+      });
+
+      if (rosterItems.length > 0) {
+        showToast('Mengunggah ' + rosterItems.length + ' entri Roster...', 'info');
+        runBackend('saveBulkRoster', [rosterItems], function(res) {
+          if (res.success) {
+            showToast(res.message, 'success');
+            fetchHODRosterData();
+          } else showToast(res.message, 'error');
+        });
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function fetchGlobalAttendance(page = 1) {
+    const searchKey = document.getElementById('search-attendance').value;
+    runBackend('getGlobalAttendanceList', [searchKey, 'ALL', page, 15], function(res) {
+      if (res.success) {
+        const tbody = document.getElementById('table-global-absensi');
+        tbody.innerHTML = '';
+        res.data.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          tr.innerHTML = '<td class="p-3 font-semibold">' + item.tanggal + '</td>' +
+            '<td class="p-3"><div class="font-bold text-blue-800">' + item.nik + '</div><div>' + item.nama_karyawan + '</div></td>' +
+            '<td class="p-3">' + item.departemen + '</td>' +
+            '<td class="p-3 font-mono text-emerald-700">' + (item.jam_masuk || '-') + '</td>' +
+            '<td class="p-3 font-mono text-rose-700">' + (item.jam_pulang || '-') + '</td>' +
+            '<td class="p-3"><span class="px-2 py-1 rounded text-[10px] font-bold ' + (item.status === 'Tepat Waktu' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800') + '">' + item.status + '</span></td>' +
+            '<td class="p-3 font-mono text-rose-600">' + item.keterlambatan_menit + ' mnt</td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  }
+
+  function downloadPDFReport() {
+    const pickerStr = getActiveCutoffMonthStr();
+    
+    showToast('Memproses PDF Laporan Balcone...', 'info');
+    runBackend('generatePDFReport', [pickerStr], function(res) {
+      if (res.success) {
+        const link = document.createElement('a');
+        link.href = res.pdfBase64;
+        link.download = res.fileName;
+        link.click();
+        showToast('Laporan PDF Berhasil Diunduh!', 'success');
+      } else showToast(res.message, 'error');
+    });
+  }
+
+  function loadKPI() {
+    const pickerStr = getActiveCutoffMonthStr();
+
+    runBackend('calculateMonthlyKPI', [pickerStr], function(res) {
+      if (res.success) {
+        const tbody = document.getElementById('table-kpi-data');
+        tbody.innerHTML = '';
+        res.data.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          tr.innerHTML = '<td class="p-3 font-bold"><div class="text-blue-800">' + item.nik + '</div><div>' + item.nama + '</div></td>' +
+            '<td class="p-3">' + item.departemen + '</td>' +
+            '<td class="p-3 text-center font-bold text-emerald-700">' + item.total_hadir + ' Hr</td>' +
+            '<td class="p-3 text-center font-bold text-rose-600">' + item.total_terlambat + ' x</td>' +
+            '<td class="p-3 text-center font-extrabold text-blue-900">' + item.skor_kpi_persen + '</td>' +
+            '<td class="p-3 text-center"><span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">' + item.predikat + '</span></td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  }
+
+  function openModalShift(idShift = '', namaShift = '', jamMasuk = '08:00', jamPulang = '17:00', toleransi = '15') {
+    document.getElementById('shift-old-id').value = idShift;
+    document.getElementById('shift-id').value = idShift;
+    document.getElementById('shift-nama').value = namaShift;
+    document.getElementById('shift-masuk').value = jamMasuk;
+    document.getElementById('shift-pulang').value = jamPulang;
+    document.getElementById('shift-toleransi').value = toleransi;
+    
+    if (idShift) {
+      document.getElementById('modal-shift-title').innerText = 'Edit Shift Kerja (' + idShift + ')';
+    } else {
+      document.getElementById('modal-shift-title').innerText = 'Tambah Shift Kerja Baru';
+    }
+    document.getElementById('modal-shift').classList.remove('hidden');
+  }
+
+  function closeModalShift() {
+    document.getElementById('modal-shift').classList.add('hidden');
+  }
+
+  function handleShiftSubmit(e) {
+    e.preventDefault();
+    const idShift = document.getElementById('shift-id').value.trim();
+    const namaShift = document.getElementById('shift-nama').value.trim();
+    const jamMasuk = document.getElementById('shift-masuk').value;
+    const jamPulang = document.getElementById('shift-pulang').value;
+    const toleransi = document.getElementById('shift-toleransi').value;
+    const oldShiftId = document.getElementById('shift-old-id').value;
+
+    const btn = document.getElementById('btn-submit-shift');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
+
+    runBackend('saveShift', [idShift, namaShift, jamMasuk, jamPulang, toleransi, oldShiftId], function(res) {
+      btn.disabled = false;
+      btn.innerHTML = 'Simpan Shift';
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalShift();
+        loadShiftDeptData();
+      } else {
+        showToast(res.message, 'error');
+      }
+    }, function(err) {
+      btn.disabled = false;
+      btn.innerHTML = 'Simpan Shift';
+      showToast('Gagal menyimpan shift: ' + (err.message || err), 'error');
+    });
+  }
+
+  function deleteShift(idShift) {
+    if (confirm('Apakah Anda yakin ingin menghapus shift ' + idShift + '?')) {
+      runBackend('deleteShift', [idShift], function(res) {
+        if (res.success) {
+          showToast(res.message, 'success');
+          loadShiftDeptData();
+        } else {
+          showToast(res.message, 'error');
+        }
+      });
+    }
+  }
+
+  function openModalDepartemen(idDept = '', namaDept = '') {
+    document.getElementById('dept-id').value = idDept;
+    document.getElementById('dept-nama').value = namaDept;
+    document.getElementById('modal-departemen').classList.remove('hidden');
+  }
+
+  function closeModalDepartemen() {
+    document.getElementById('modal-departemen').classList.add('hidden');
+  }
+
+  function handleDepartemenSubmit(e) {
+    e.preventDefault();
+    const idDept = document.getElementById('dept-id').value;
+    const namaDept = document.getElementById('dept-nama').value.trim();
+
+    const btn = document.getElementById('btn-submit-dept');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
+
+    runBackend('saveDepartemen', [idDept, namaDept], function(res) {
+      btn.disabled = false;
+      btn.innerHTML = 'Simpan Dept';
+      if (res.success) {
+        showToast(res.message, 'success');
+        closeModalDepartemen();
+        loadShiftDeptData();
+      } else {
+        showToast(res.message, 'error');
+      }
+    }, function(err) {
+      btn.disabled = false;
+      btn.innerHTML = 'Simpan Dept';
+      showToast('Gagal menyimpan departemen: ' + (err.message || err), 'error');
+    });
+  }
+
+  function deleteDepartemen(idDept) {
+    if (confirm('Apakah Anda yakin ingin menghapus departemen ini?')) {
+      runBackend('deleteDepartemen', [idDept], function(res) {
+        if (res.success) {
+          showToast(res.message, 'success');
+          loadShiftDeptData();
+        } else {
+          showToast(res.message, 'error');
+        }
+      });
+    }
+  }
+
+  function loadShiftDeptData() {
+    runBackend('getShiftList', [], function(res) {
+      if (res.success) {
+        const tbody = document.getElementById('table-shift-list');
+        tbody.innerHTML = '';
+        res.data.forEach(s => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          tr.innerHTML = '<td class="p-2.5 font-bold"><span class="text-blue-800 font-mono">' + s.id_shift + '</span> • ' + s.nama_shift + '</td>' +
+            '<td class="p-2.5 font-mono text-emerald-700">' + s.jam_masuk + '</td>' +
+            '<td class="p-2.5 font-mono text-rose-700">' + s.jam_pulang + '</td>' +
+            '<td class="p-2.5 font-mono">' + s.toleransi_terlambat_menit + ' mnt</td>' +
+            '<td class="p-2.5 text-center flex justify-center gap-2">' +
+            '<button onclick="openModalShift(\'' + s.id_shift + '\', \'' + s.nama_shift + '\', \'' + s.jam_masuk + '\', \'' + s.jam_pulang + '\', \'' + s.toleransi_terlambat_menit + '\')" class="text-blue-600 font-bold hover:underline">Edit</button>' +
+            '<button onclick="deleteShift(\'' + s.id_shift + '\')" class="text-rose-600 font-bold hover:underline">Hapus</button>' +
+            '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+
+    runBackend('getDepartemenList', [], function(res) {
+      if (res.success) {
+        const tbody = document.getElementById('table-dept-list');
+        tbody.innerHTML = '';
+        res.data.forEach(d => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          tr.innerHTML = '<td class="p-2.5 font-mono text-gray-500">' + d.id_departemen + '</td>' +
+            '<td class="p-2.5 font-bold text-gray-800">' + d.nama_departemen + '</td>' +
+            '<td class="p-2.5 text-center">' +
+            '<button onclick="deleteDepartemen(\'' + d.id_departemen + '\')" class="text-rose-600 font-bold hover:underline">Hapus</button>' +
+            '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  }
+
+  function fetchRosterData() {
+    const pickerVal = document.getElementById('roster-month-picker').value;
+    if (!pickerVal) {
+      document.getElementById('roster-month-picker').value = getActiveCutoffMonthStr();
+    }
+
+    runBackend('getRosterData', [document.getElementById('roster-month-picker').value, 'ALL'], function(res) {
+      if (res.success) {
+        renderRosterTable(res);
+      }
+    });
+  }
+
+  function renderRosterTable(data) {
+    const headerRow = document.getElementById('roster-table-header-row');
+    const tbody = document.getElementById('table-roster-matrix');
+
+    headerRow.innerHTML = '<th class="p-3 sticky left-0 bg-blue-900 z-10 min-w-[150px]">Departemen & NIK/Nama</th>';
+    tbody.innerHTML = '';
+
+    const startDate = parseDateStrToDate(data.cutoff.startIso);
+    const endDate = parseDateStrToDate(data.cutoff.endIso);
+    const dateList = [];
+
+    let cur = new Date(startDate);
+    while (cur <= endDate) {
+      const iso = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+      const display = String(cur.getDate()).padStart(2, '0') + '/' + String(cur.getMonth() + 1).padStart(2, '0');
+      dateList.push({ iso: iso, display: display });
+
+      const th = document.createElement('th');
+      th.className = 'p-2 text-center min-w-[70px] border-r border-blue-800';
+      th.innerText = display;
+      headerRow.appendChild(th);
+
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const grouped = {};
+    data.karyawan.forEach(emp => {
+      const dept = emp.departemen || 'Lainnya';
+      if (!grouped[dept]) grouped[dept] = [];
+      grouped[dept].push(emp);
+    });
+
+    Object.keys(grouped).forEach(deptName => {
+      const deptHeaderTr = document.createElement('tr');
+      deptHeaderTr.className = 'bg-blue-100/70 text-blue-900 font-extrabold text-xs';
+      deptHeaderTr.innerHTML = '<td colspan="' + (dateList.length + 1) + '" class="p-2.5 uppercase tracking-wider"><i class="fa-solid fa-building text-blue-800 mr-2"></i>DEPARTEMEN: ' + deptName + '</td>';
+      tbody.appendChild(deptHeaderTr);
+
+      grouped[deptName].forEach(emp => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b hover:bg-gray-50 text-[11px]';
+
+        let nameTd = '<td class="p-2.5 font-bold sticky left-0 bg-white border-r z-10 shadow-sm">' +
+          '<div class="text-blue-900">' + emp.nik + '</div>' +
+          '<div class="text-gray-800">' + emp.nama + '</div>' +
+          '</td>';
+
+        let daysTds = '';
+        dateList.forEach(d => {
+          const matched = data.roster.find(r => r.nik === emp.nik && r.tanggal === d.iso);
+          const currentVal = matched ? (matched.id_shift || matched.status_hari) : 'OFF';
+
+          daysTds += '<td class="p-1 text-center border-r">' +
+            '<select onchange="handleRosterCellChange(\'' + emp.nik + '\', \'' + d.iso + '\', this.value)" class="p-1 text-[10px] rounded-lg border-0 focus:ring-1 focus:ring-blue-800 ' + getShiftSelectBg(currentVal, data.shifts) + '">' +
+            buildShiftDropdownOptions(data.shifts, currentVal) +
+            '</select>' +
+            '</td>';
+        });
+
+        tr.innerHTML = nameTd + daysTds;
+        tbody.appendChild(tr);
+      });
+    });
+  }
+
+  function handleRosterCellChange(nik, isoDate, val) {
+    runBackend('saveBulkRoster', [[{ nik: nik, tanggal: isoDate, id_shift: val, status_hari: val }]], function(res) {
+      if (res.success) showToast('Roster ' + nik + ' diperbarui', 'success');
+    });
+  }
+
+  function downloadExcelTemplate() {
+    const picker = document.getElementById('roster-month-picker').value;
+    runBackend('getRosterData', [picker, 'ALL'], function(res) {
+      if (res.success) {
+        const startDate = parseDateStrToDate(res.cutoff.startIso);
+        const endDate = parseDateStrToDate(res.cutoff.endIso);
+        const dateCols = [];
+
+        let cur = new Date(startDate);
+        while (cur <= endDate) {
+          const iso = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+          dateCols.push(iso);
+          cur.setDate(cur.getDate() + 1);
+        }
+
+        const rows = res.karyawan.map(emp => {
+          let rowObj = { "Departemen": emp.departemen, "NIK": emp.nik, "Nama Karyawan": emp.nama };
+          dateCols.forEach(d => {
+            const matched = res.roster.find(r => r.nik === emp.nik && r.tanggal === d);
+            rowObj[d] = matched ? (matched.id_shift || matched.status_hari) : "OFF";
+          });
+          return rowObj;
+        });
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Template_Roster");
+        XLSX.writeFile(wb, "Template_Roster_Balcone_" + picker + ".xlsx");
+      }
+    });
+  }
+
+  function handleRosterExcelUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      const data = new Uint8Array(evt.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+      let rosterItems = [];
+      jsonData.forEach(row => {
+        const nik = row["NIK"] || row["nik"];
+        if (nik) {
+          Object.keys(row).forEach(key => {
+            if (key.match(/^\d{4}-\d{2}-\d{2}$/)) {
+              rosterItems.push({ nik: nik, tanggal: key, id_shift: row[key], status_hari: row[key] });
+            }
+          });
+        }
+      });
+
+      if (rosterItems.length > 0) {
+        showToast('Mengunggah ' + rosterItems.length + ' entri Roster...', 'info');
+        runBackend('saveBulkRoster', [rosterItems], function(res) {
+          if (res.success) {
+            showToast(res.message, 'success');
+            fetchRosterData();
+          } else showToast(res.message, 'error');
+        });
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function loadOfficeSettings() {
+    runBackend('getOfficeSettings', [], function(res) {
+      if (res.success && res.settings) {
+        document.getElementById('cfg-lat').value = res.settings.lat;
+        document.getElementById('cfg-long').value = res.settings.long;
+        document.getElementById('cfg-radius').value = res.settings.radius;
+        document.getElementById('cfg-qr').value = res.settings.qrCode;
+        document.getElementById('cfg-pin-payroll').value = res.settings.pinPayroll || '123456';
+        document.getElementById('cfg-rate-denda').value = res.settings.rateDendaDefault || '1000';
+
+        initSettingsMap(parseFloat(res.settings.lat), parseFloat(res.settings.long), parseFloat(res.settings.radius));
+        renderQRCards();
+      }
+    });
+  }
+
+  function initSettingsMap(lat, long, radius) {
+    if (!leafletMap) {
+      leafletMap = L.map('settings-map').setView([lat, long], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© The Balcone Suites & Resort'
+      }).addTo(leafletMap);
+
+      leafletMarker = L.marker([lat, long], { draggable: true }).addTo(leafletMap);
+      leafletCircle = L.circle([lat, long], { color: '#1E3A8A', fillColor: '#3B82F6', fillOpacity: 0.2, radius: radius }).addTo(leafletMap);
+
+      leafletMarker.on('dragend', function(e) {
+        const newPos = e.target.getLatLng();
+        document.getElementById('cfg-lat').value = newPos.lat.toFixed(6);
+        document.getElementById('cfg-long').value = newPos.lng.toFixed(6);
+        leafletCircle.setLatLng(newPos);
+      });
+
+      leafletMap.on('click', function(e) {
+        leafletMarker.setLatLng(e.latlng);
+        leafletCircle.setLatLng(e.latlng);
+        document.getElementById('cfg-lat').value = e.latlng.lat.toFixed(6);
+        document.getElementById('cfg-long').value = e.latlng.lng.toFixed(6);
+      });
+    } else {
+      leafletMap.setView([lat, long], 16);
+      leafletMarker.setLatLng([lat, long]);
+      leafletCircle.setLatLng([lat, long]);
+      leafletCircle.setRadius(radius);
+    }
+  }
+
+  function renderQRCards() {
+    const qrVal = document.getElementById('cfg-qr').value;
+    document.getElementById('qr-secret-display').innerText = qrVal;
+
+    const container = document.getElementById('admin-qr-preview');
+    container.innerHTML = '';
+    new QRCode(container, {
+      text: qrVal,
+      width: 160,
+      height: 160
+    });
+  }
+
+  function handleSaveSettings(e) {
+    e.preventDefault();
+    runBackend('saveOfficeSettings', [
+      document.getElementById('cfg-lat').value,
+      document.getElementById('cfg-long').value,
+      document.getElementById('cfg-radius').value,
+      document.getElementById('cfg-qr').value,
+      document.getElementById('cfg-pin-payroll').value,
+      document.getElementById('cfg-rate-denda').value
+    ], function(res) {
+      if (res.success) {
+        showToast(res.message, 'success');
+        renderQRCards();
+      } else showToast(res.message, 'error');
+    });
+  }
+</script>

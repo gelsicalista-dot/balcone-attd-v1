@@ -1,0 +1,654 @@
+<!-- ========================================== -->
+<!-- MODAL 1: PIN GATEKEEPER PAYROLL           -->
+<!-- ========================================== -->
+<div id="modal-payroll-pin" class="fixed inset-0 bg-black/70 backdrop-blur-md hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-xs text-center space-y-4">
+    <div class="w-12 h-12 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center mx-auto text-xl">
+      <i class="fa-solid fa-shield-halved"></i>
+    </div>
+    <div>
+      <h3 class="font-bold text-gray-800 text-base">Otorisasi Payroll HRD</h3>
+      <p class="text-xs text-gray-500">Masukkan PIN Rahasia 6-Digit khusus penggajian</p>
+    </div>
+
+    <div>
+      <input type="password" id="input-payroll-pin" maxlength="6" autofocus placeholder="••••••" class="w-full text-center tracking-[1em] text-lg font-bold p-3 border rounded-xl focus:ring-2 focus:ring-emerald-600 font-mono">
+    </div>
+
+    <div class="flex gap-2">
+      <button onclick="closePayrollPinModal()" class="w-1/2 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold">Batal</button>
+      <button onclick="submitPayrollPin()" class="w-1/2 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold">Buka Modul</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 2: EDIT MASTER STRUKTUR GAJI        -->
+<!-- ========================================== -->
+<div id="modal-edit-salary-master" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-md space-y-4">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-gray-800 text-sm">Edit Struktur Gaji Master Karyawan</h3>
+      <button onclick="closeModalSalaryMaster()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <form onsubmit="handleSaveSalaryMasterSubmit(event)" class="space-y-3 text-xs">
+      <input type="hidden" id="salmaster-nik">
+      <div id="salmaster-emp-info" class="p-2.5 bg-blue-50 text-blue-900 font-bold rounded-xl">NIK & Nama</div>
+
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Gaji Pokok / Rate Harian (Rp)</label>
+        <input type="number" id="salmaster-gaji-pokok" required class="w-full p-2.5 border rounded-xl font-bold text-blue-900">
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Tunj. Jabatan</label>
+          <input type="number" id="salmaster-tunj-jabatan" required class="w-full p-2 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Tunj. Makan</label>
+          <input type="number" id="salmaster-tunj-makan" required class="w-full p-2 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Tunj. Transport</label>
+          <input type="number" id="salmaster-tunj-transport" required class="w-full p-2 border rounded-xl">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Status BPJS TK</label>
+          <select id="salmaster-bpjs-tk" class="w-full p-2.5 border rounded-xl bg-white font-bold">
+            <option value="Ya">Ya (Dipotong)</option>
+            <option value="Tidak">Tidak (Bebas Potongan)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Status BPJS Kesehatan</label>
+          <select id="salmaster-bpjs-kes" class="w-full p-2.5 border rounded-xl bg-white font-bold">
+            <option value="Ya">Ya (Dipotong)</option>
+            <option value="Tidak">Tidak (Bebas Potongan)</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Mode Perhitungan Prorate Gaji *</label>
+        <select id="salmaster-mode-prorate" class="w-full p-2.5 border rounded-xl bg-white font-bold text-blue-900">
+          <option value="Otomatis">Otomatis (Sesuai Tanggal Masuk/Resign)</option>
+          <option value="Paksa Full (100%)">Paksa Full (100%)</option>
+          <option value="Paksa Prorate">Paksa Prorate</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Rate Denda Keterlambatan (Rp/Menit)</label>
+        <input type="number" id="salmaster-rate-denda" required class="w-full p-2.5 border rounded-xl font-mono">
+      </div>
+
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalSalaryMaster()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" class="btn-primary px-5 py-2">Simpan Perubahan</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 3: SET STATUS RESIGN KARYAWAN       -->
+<!-- ========================================== -->
+<div id="modal-set-resign" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-sm space-y-4 text-xs">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-gray-800 text-sm">Set Status Resign Karyawan</h3>
+      <button onclick="closeModalSetResign()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <form onsubmit="handleSetResignSubmit(event)" class="space-y-3">
+      <input type="hidden" id="resign-nik">
+      <div id="resign-emp-info" class="p-2.5 bg-rose-50 text-rose-900 font-bold rounded-xl">NIK & Nama</div>
+
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Status Kerja *</label>
+        <select id="resign-status-kerja" class="w-full p-2.5 border rounded-xl bg-white font-bold">
+          <option value="Resign">Resign (Non-Aktifkan)</option>
+          <option value="Aktif">Aktif Kembali</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Tanggal Resmi Resign *</label>
+        <input type="date" id="resign-tanggal" required class="w-full p-2.5 border rounded-xl font-bold">
+      </div>
+
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalSetResign()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-xl font-bold">Simpan Status</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 4: CATAT PINJAMAN / KASBON BARU    -->
+<!-- ========================================== -->
+<div id="modal-add-loan" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-sm space-y-3 text-xs">
+    <h3 class="font-bold text-gray-800 text-sm border-b pb-2">Catat Pinjaman Karyawan Baru</h3>
+    <form onsubmit="handleSaveLoanSubmit(event)" class="space-y-3">
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Pilih Karyawan</label>
+        <select id="loan-nik" required class="w-full p-2.5 border rounded-xl bg-white">
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Total Nominal Pinjaman (Rp)</label>
+        <input type="number" id="loan-total" required class="w-full p-2.5 border rounded-xl font-bold">
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Cicilan Per Bulan (Rp)</label>
+        <input type="number" id="loan-cicilan" required class="w-full p-2.5 border rounded-xl font-bold text-rose-600">
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Tanggal Pinjam</label>
+        <input type="date" id="loan-tanggal" required class="w-full p-2.5 border rounded-xl">
+      </div>
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalAddLoan()" class="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl">Batal</button>
+        <button type="submit" class="btn-primary px-4 py-1.5 text-xs">Simpan Pinjaman</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 5: KELOLA SHIFT KERJA               -->
+<!-- ========================================== -->
+<div id="modal-shift" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-sm space-y-4 text-xs">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-gray-800 text-sm" id="modal-shift-title">Tambah Shift Kerja</h3>
+      <button onclick="closeModalShift()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <form onsubmit="handleShiftSubmit(event)" class="space-y-3">
+      <input type="hidden" id="shift-old-id">
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">ID Shift (misal: SFT-01)</label>
+        <input type="text" id="shift-id" required placeholder="SFT-01" class="w-full p-2.5 border rounded-xl font-mono uppercase">
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Nama Shift *</label>
+        <input type="text" id="shift-nama" required placeholder="Shift Pagi" class="w-full p-2.5 border rounded-xl font-bold">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Jam Masuk *</label>
+          <input type="time" id="shift-masuk" required class="w-full p-2.5 border rounded-xl font-mono">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Jam Pulang *</label>
+          <input type="time" id="shift-pulang" required class="w-full p-2.5 border rounded-xl font-mono">
+        </div>
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Toleransi Terlambat (Menit) *</label>
+        <input type="number" id="shift-toleransi" value="15" min="0" required class="w-full p-2.5 border rounded-xl font-mono">
+      </div>
+
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalShift()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" id="btn-submit-shift" class="btn-primary px-5 py-2">Simpan Shift</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 6: KELOLA DEPARTEMEN                -->
+<!-- ========================================== -->
+<div id="modal-departemen" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-sm space-y-4 text-xs">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-gray-800 text-sm">Tambah Departemen Baru</h3>
+      <button onclick="closeModalDepartemen()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <form onsubmit="handleDepartemenSubmit(event)" class="space-y-3">
+      <input type="hidden" id="dept-id">
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Nama Departemen *</label>
+        <input type="text" id="dept-nama" required placeholder="Misal: Housekeeping" class="w-full p-2.5 border rounded-xl font-bold">
+      </div>
+
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalDepartemen()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" id="btn-submit-dept" class="btn-primary px-5 py-2">Simpan Dept</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 7: SLIP GAJI VIEW & PRINT            -->
+<!-- ========================================== -->
+<div id="modal-payslip-view" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+  <div class="card-saas p-6 w-full max-w-lg my-8 space-y-4 text-xs">
+    <div class="flex justify-between items-center border-b pb-3">
+      <h3 class="font-bold text-gray-800 text-sm flex items-center gap-2"><i class="fa-solid fa-file-invoice-dollar text-emerald-600"></i> Slip Gaji Karyawan Balcone</h3>
+      <div class="flex items-center gap-2">
+        <button onclick="window.print()" class="px-3 py-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 font-bold rounded-lg text-xs flex items-center gap-1">
+          <i class="fa-solid fa-print"></i> Cetak
+        </button>
+        <button onclick="closeModalPayslipView()" class="text-gray-400 hover:text-gray-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+
+    <div id="printable-payslip" class="space-y-4">
+      <div class="flex justify-between items-center border-b pb-2">
+        <div>
+          <h2 class="font-bold text-blue-900 uppercase text-sm">THE BALCONE SUITES & RESORT</h2>
+          <p class="text-[10px] text-gray-500">PAYSLIP / SLIP GAJI KARYAWAN RESORT</p>
+        </div>
+        <div class="text-right">
+          <span class="text-xs font-bold bg-blue-100 text-blue-900 px-3 py-1 rounded-full" id="ps-bulan-tahun">PERIODE: SEPT 2026</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded-xl border">
+        <div>
+          <p class="text-[10px] text-gray-400">NIK / Nama Karyawan</p>
+          <p class="font-bold text-gray-900" id="ps-emp-nama">NIK-0002 • Budi Santoso</p>
+          <p class="text-[10px] text-gray-400 mt-1">Departemen / Jabatan</p>
+          <p class="font-semibold text-gray-700" id="ps-emp-dept">Front Office • Receptionist</p>
+        </div>
+        <div class="text-right">
+          <p class="text-[10px] text-gray-400">Status Karyawan</p>
+          <p class="font-bold text-purple-900" id="ps-emp-status">PKWT</p>
+          <p class="text-[10px] text-gray-400 mt-1">Bank & No. Rekening</p>
+          <p class="font-semibold text-gray-700" id="ps-emp-bank">Mandiri • 987654321</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-6">
+        <div class="space-y-2">
+          <h4 class="font-bold text-emerald-700 border-b pb-1 text-xs uppercase tracking-wider">A. Pendapatan (Earnings)</h4>
+          <div class="flex justify-between"><span>Gaji Pokok / Upah Hadir:</span><span class="font-mono font-bold" id="ps-earning-pokok">Rp 0</span></div>
+          <div class="flex justify-between"><span>Tunjangan Tetap:</span><span class="font-mono font-bold" id="ps-earning-tunjangan">Rp 0</span></div>
+          <div class="flex justify-between border-t pt-1 font-bold text-emerald-800"><span>Total Pendapatan:</span><span class="font-mono" id="ps-earning-total">Rp 0</span></div>
+        </div>
+
+        <div class="space-y-2">
+          <h4 class="font-bold text-rose-700 border-b pb-1 text-xs uppercase tracking-wider">B. Potongan (Deductions)</h4>
+          <div class="flex justify-between"><span>BPJS Ketenagakerjaan:</span><span class="font-mono" id="ps-ded-bpjstk">Rp 0</span></div>
+          <div class="flex justify-between"><span>BPJS Kesehatan:</span><span class="font-mono" id="ps-ded-bpjskes">Rp 0</span></div>
+          <div class="flex justify-between"><span>Denda Keterlambatan:</span><span class="font-mono" id="ps-ded-denda">Rp 0</span></div>
+          <div class="flex justify-between"><span>Cicilan Pinjaman:</span><span class="font-mono" id="ps-ded-kasbon">Rp 0</span></div>
+          <div class="flex justify-between border-t pt-1 font-bold text-rose-800"><span>Total Potongan:</span><span class="font-mono" id="ps-ded-total">Rp 0</span></div>
+        </div>
+      </div>
+
+      <div class="bg-blue-900 text-white p-4 rounded-xl flex justify-between items-center shadow-lg">
+        <div>
+          <p class="text-[10px] uppercase tracking-widest text-blue-200 font-bold">Take Home Pay (THP Bersih)</p>
+          <p class="text-xl font-extrabold font-mono" id="ps-thp-total">Rp 0</p>
+        </div>
+        <div class="text-right text-[10px] text-blue-200">
+          <p>Status: <span class="text-emerald-400 font-bold" id="ps-status-bayar">PAID</span></p>
+          <p id="ps-tgl-transfer">Tgl Transfer: 25/09/2026</p>
+        </div>
+      </div>
+
+      <div class="pt-4 text-[9px] text-gray-400 text-center border-t border-dashed">
+        Dokumen ini diterbitkan secara elektronik oleh Sistem Payroll HRD The Balcone Suites & Resort.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 8: CATATAN ALASAN PENOLAKAN         -->
+<!-- ========================================== -->
+<div id="modal-reject-reason" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-md">
+    <div class="flex justify-between items-center mb-3 border-b pb-2">
+      <h3 class="font-bold text-gray-800 text-sm text-rose-600"><i class="fa-solid fa-circle-xmark mr-1.5"></i>Alasan Penolakan Pengajuan</h3>
+      <button onclick="closeModalRejectReason()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p class="text-xs text-gray-500 mb-3">Berikan catatan atau alasan penolakan agar karyawan dapat memahami pertimbangan manajemen.</p>
+    <input type="hidden" id="reject-target-id">
+    <div>
+      <textarea id="reject-reason-input" rows="3" required placeholder="Tuliskan alasan penolakan..." class="w-full p-2.5 border rounded-xl text-xs"></textarea>
+    </div>
+    <div class="flex gap-2 justify-end pt-3 border-t mt-3">
+      <button type="button" onclick="closeModalRejectReason()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-xs font-semibold">Batal</button>
+      <button type="button" onclick="confirmSubmitRejection()" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-xl text-xs font-bold">Kirim Penolakan</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 9: EDIT PROFIL KARYAWAN             -->
+<!-- ========================================== -->
+<div id="modal-edit-profil" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+  <div class="card-saas p-6 w-full max-w-xl my-8 max-h-[90vh] overflow-y-auto">
+    <div class="flex justify-between items-center mb-4 border-b pb-3">
+      <div>
+        <h3 class="font-bold text-gray-800 text-base">Edit Data Profil Karyawan</h3>
+        <p class="text-xs text-gray-500">Perubahan data memerlukan persetujuan dari Admin HR</p>
+      </div>
+      <button onclick="closeModalEditProfil()" class="text-gray-400 hover:text-gray-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <form onsubmit="handleEditProfilSubmit(event)" class="space-y-4 text-xs">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Nama Lengkap *</label>
+          <input type="text" id="edit-nama" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">No. Telepon / WA *</label>
+          <input type="tel" id="edit-phone" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">No. KTP / Identitas *</label>
+          <input type="text" id="edit-no-identitas" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Status Kawin *</label>
+          <select id="edit-status-kawin" class="w-full p-2.5 border rounded-xl bg-white">
+            <option value="TK/0">TK/0 (Belum Menikah)</option>
+            <option value="K/0">K/0 (Menikah Tanpa Anak)</option>
+            <option value="K/1">K/1 (Menikah Anak 1)</option>
+            <option value="K/2">K/2 (Menikah Anak 2)</option>
+            <option value="K/3">K/3 (Menikah Anak 3+)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Bank *</label>
+          <select id="edit-bank" class="w-full p-2.5 border rounded-xl bg-white">
+            <option value="Mandiri">Mandiri</option>
+            <option value="BNI">BNI</option>
+            <option value="BCA">BCA</option>
+            <option value="BRI">BRI</option>
+            <option value="Tunai">Tunai</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">No. Rekening Bank *</label>
+          <input type="text" id="edit-no-rekening" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div class="md:col-span-2">
+          <label class="block font-semibold text-gray-600 mb-1">Ganti Pas Foto (Opsional)</label>
+          <input type="file" id="edit-foto-file" accept="image/*" onchange="previewEditFoto(event)" class="w-full p-2 border rounded-xl bg-white text-xs">
+          <input type="hidden" id="edit-foto-base64">
+        </div>
+        <div class="md:col-span-2">
+          <label class="block font-semibold text-gray-600 mb-1">Alamat Lengkap *</label>
+          <textarea id="edit-alamat" rows="2" required class="w-full p-2.5 border rounded-xl"></textarea>
+        </div>
+      </div>
+
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalEditProfil()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" id="btn-submit-edit-profil" class="btn-primary px-5 py-2 flex items-center justify-center gap-2">
+          <span>Kirim Pengajuan Edit</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 10: PENDAFTARAN KARYAWAN BARU       -->
+<!-- ========================================== -->
+<div id="modal-register" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+  <div class="card-saas p-6 w-full max-w-xl my-8 max-h-[90vh] overflow-y-auto">
+    <div class="flex justify-between items-center mb-4 border-b pb-3">
+      <div>
+        <h3 class="font-bold text-gray-800 text-base">Pendaftaran Karyawan Baru</h3>
+        <p class="text-xs text-gray-500">Lengkapi formulir pendaftaran untuk mendapatkan akun resort</p>
+      </div>
+      <button onclick="closeModalRegister()" class="text-gray-400 hover:text-gray-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <form onsubmit="handleRegisterSubmit(event)" class="space-y-4 text-xs">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Nama Lengkap *</label>
+          <input type="text" id="reg-nama" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">No. Telepon / WA *</label>
+          <input type="tel" id="reg-phone" required class="w-full p-2.5 border rounded-xl" placeholder="08123456789">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Password *</label>
+          <input type="password" id="reg-password" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Role Akun *</label>
+          <select id="reg-role" class="w-full p-2.5 border rounded-xl bg-white font-bold">
+            <option value="Karyawan">Karyawan (Staff)</option>
+            <option value="HOD">HOD (Head of Department)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Status Karyawan *</label>
+          <select id="reg-status-karyawan" class="w-full p-2.5 border rounded-xl bg-white">
+            <option value="PKWT">PKWT</option>
+            <option value="PKWTT">PKWTT</option>
+            <option value="DW">DW (Daily Worker)</option>
+            <option value="Casual">Casual</option>
+            <option value="Training">Training</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Departemen *</label>
+          <select id="reg-departemen" class="w-full p-2.5 border rounded-xl bg-white">
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Jabatan *</label>
+          <input type="text" id="reg-jabatan" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">No. KTP / Identitas *</label>
+          <input type="text" id="reg-no-identitas" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Tanggal Masuk Kerja *</label>
+          <input type="date" id="reg-tgl-masuk" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Tanggal Lahir *</label>
+          <input type="date" id="reg-tgl-lahir" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Status Kawin *</label>
+          <select id="reg-status-kawin" class="w-full p-2.5 border rounded-xl bg-white">
+            <option value="TK/0">TK/0 (Belum Menikah)</option>
+            <option value="K/0">K/0 (Menikah Tanpa Anak)</option>
+            <option value="K/1">K/1 (Menikah Anak 1)</option>
+            <option value="K/2">K/2 (Menikah Anak 2)</option>
+            <option value="K/3">K/3 (Menikah Anak 3+)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Bank *</label>
+          <select id="reg-bank" class="w-full p-2.5 border rounded-xl bg-white">
+            <option value="Mandiri">Mandiri</option>
+            <option value="BNI">BNI</option>
+            <option value="BCA">BCA</option>
+            <option value="BRI">BRI</option>
+            <option value="Tunai">Tunai</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">No. Rekening Bank *</label>
+          <input type="text" id="reg-no-rekening" required class="w-full p-2.5 border rounded-xl">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-600 mb-1">Pas Foto (Opsional)</label>
+          <input type="file" id="reg-foto-file" accept="image/*" class="w-full p-2 border rounded-xl bg-white text-xs">
+        </div>
+        <div class="md:col-span-2">
+          <label class="block font-semibold text-gray-600 mb-1">Alamat Lengkap *</label>
+          <textarea id="reg-alamat" rows="2" required class="w-full p-2.5 border rounded-xl"></textarea>
+        </div>
+      </div>
+
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalRegister()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" id="btn-submit-register" class="btn-primary px-5 py-2 flex items-center justify-center gap-2">
+          <span>Kirim Pendaftaran</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 11: SCANNER QR CODE ABSENSI         -->
+<!-- ========================================== -->
+<div id="modal-qr" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-sm text-center">
+    <h3 class="font-bold text-gray-800 mb-1">Scan QR Code Balcone</h3>
+    <p class="text-xs text-gray-500 mb-4">Arahkan kamera ke QR Code di area resort.</p>
+    
+    <div class="relative w-full aspect-square bg-gray-900 rounded-2xl overflow-hidden mb-4 flex items-center justify-center">
+      <div id="qr-loading" class="absolute inset-0 flex flex-col items-center justify-center text-white/70 text-xs gap-2 z-10 bg-gray-900">
+        <i class="fa-solid fa-spinner fa-spin text-2xl text-blue-500"></i>
+        <span>Membuka Kamera...</span>
+      </div>
+      <div id="qr-reader" class="w-full h-full"></div>
+    </div>
+
+    <button onclick="closeQRScanner()" class="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition">Batal / Tutup Kamera</button>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 12: FORM PENGAJUAN CUTI / IZIN     -->
+<!-- ========================================== -->
+<div id="modal-izin" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-md">
+    <h3 class="font-bold text-gray-800 mb-4">Form Pengajuan Cuti / Izin</h3>
+    <form onsubmit="handleIzinSubmit(event)" class="space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Jenis Pengajuan</label>
+        <select id="izin-jenis" class="w-full p-2.5 border rounded-xl text-xs">
+          <option value="Cuti Tahunan">Cuti Tahunan (CT)</option>
+          <option value="Publik Holiday">Publik Holiday (PH)</option>
+          <option value="Extra Off">Extra Off (EO)</option>
+          <option value="Sakit">Sakit (S)</option>
+          <option value="Izin">Izin (I)</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Tanggal Mulai</label>
+          <input type="date" id="izin-tgl-mulai" required class="w-full p-2.5 border rounded-xl text-xs">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Tanggal Selesai</label>
+          <input type="date" id="izin-tgl-selesai" required class="w-full p-2.5 border rounded-xl text-xs">
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Jumlah Hari</label>
+        <input type="number" id="izin-jumlah" min="1" value="1" required class="w-full p-2.5 border rounded-xl text-xs">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Alasan</label>
+        <textarea id="izin-alasan" rows="2" required class="w-full p-2.5 border rounded-xl text-xs"></textarea>
+      </div>
+      <div class="flex gap-2 justify-end mt-4">
+        <button type="button" onclick="closeModalIzin()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-xs font-semibold">Batal</button>
+        <button type="submit" class="btn-primary px-4 py-2 text-xs">Kirim Pengajuan</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 13: FORM MADING DIGITAL RESORT     -->
+<!-- ========================================== -->
+<div id="modal-mading" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+  <div class="card-saas p-6 w-full max-w-md my-8">
+    <div class="flex justify-between items-center mb-4 border-b pb-2">
+      <h3 class="font-bold text-gray-800 text-sm"><i class="fa-solid fa-newspaper text-blue-800 mr-2"></i>Form Mading Digital Resort</h3>
+      <button onclick="closeModalMading()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form onsubmit="handleMadingSubmit(event)" class="space-y-3 text-xs">
+      <input type="hidden" id="mading-id">
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Judul Pengumuman *</label>
+        <input type="text" id="mading-judul" required class="w-full p-2.5 border rounded-xl" placeholder="Misal: Agenda General Cleaning">
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Status Publikasi *</label>
+        <select id="mading-status" class="w-full p-2.5 border rounded-xl bg-white font-bold">
+          <option value="Aktif">Aktif (Tampil di Karyawan)</option>
+          <option value="Non-Aktif">Non-Aktif (Sembunyikan)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Foto / Poster Mading (Opsional)</label>
+        <input type="file" id="mading-foto-file" accept="image/*" class="w-full p-2 border rounded-xl bg-white text-xs">
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-600 mb-1">Isi Pengumuman Lengkap *</label>
+        <textarea id="mading-isi" rows="5" required class="w-full p-2.5 border rounded-xl" placeholder="Tuliskan pengumuman resort secara rinci..."></textarea>
+      </div>
+      <div class="flex gap-2 justify-end pt-3 border-t">
+        <button type="button" onclick="closeModalMading()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl font-semibold">Batal</button>
+        <button type="submit" id="btn-submit-mading" class="btn-primary px-5 py-2">Simpan Mading</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL 14: DETAIL MADING & DOWNLOAD FOTO  -->
+<!-- ========================================== -->
+<div id="modal-mading-detail" class="fixed inset-0 bg-black/70 backdrop-blur-md hidden flex items-center justify-center p-4 z-50">
+  <div class="card-saas p-6 w-full max-w-lg bg-white space-y-4 max-h-[90vh] overflow-y-auto">
+    <div class="flex justify-between items-center border-b pb-2">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-newspaper text-blue-800 text-lg"></i>
+        <h3 class="font-bold text-gray-800 text-sm" id="md-detail-judul">Judul Pengumuman</h3>
+      </div>
+      <button onclick="closeModalDetailMading()" class="text-gray-400 hover:text-gray-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    
+    <div class="w-full bg-gray-900/5 rounded-2xl border p-1 flex items-center justify-center max-h-96 overflow-hidden">
+      <img id="md-detail-foto" src="" class="w-full max-h-96 object-contain rounded-xl" alt="Foto Mading">
+    </div>
+    
+    <div class="flex items-center justify-between text-[11px] text-gray-400 font-semibold">
+      <span id="md-detail-pembuat"><i class="fa-solid fa-user-pen mr-1"></i> Admin HR</span>
+      <span id="md-detail-tanggal"><i class="fa-solid fa-calendar mr-1"></i> 25/09/2026</span>
+    </div>
+
+    <div class="p-4 bg-gray-50 rounded-2xl border text-xs text-gray-700 leading-relaxed whitespace-pre-line" id="md-detail-isi">
+      Isi pengumuman Mading akan tampil di sini...
+    </div>
+
+    <div class="flex items-center justify-between pt-2 border-t">
+      <button onclick="downloadMadingImage(event)" class="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs flex items-center gap-1.5 transition">
+        <i class="fa-solid fa-download"></i> Unduh Foto Mading
+      </button>
+      <button onclick="closeModalDetailMading()" class="btn-primary px-5 py-2 text-xs">Tutup Pengumuman</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- TOAST NOTIFICATION CONTAINER              -->
+<!-- ========================================== -->
+<div id="toast" class="fixed bottom-5 right-5 hidden bg-gray-900 text-white px-5 py-3 rounded-2xl shadow-2xl text-xs flex items-center gap-3 z-50">
+  <i id="toast-icon" class="fa-solid fa-circle-info text-blue-400"></i>
+  <span id="toast-message">Pesan notifikasi</span>
+</div>

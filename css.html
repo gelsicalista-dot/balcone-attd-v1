@@ -1,0 +1,89 @@
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<style>
+  /* Custom Font & Theme Background Base */
+  body {
+    background-color: #F4F7FE;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: #1E293B;
+  }
+
+  /* Zettbos Premium SaaS Card Style */
+  .card-saas {
+    background: #FFFFFF;
+    border-radius: 20px;
+    box-shadow: 0px 18px 40px rgba(112, 144, 176, 0.12);
+    transition: all 0.3s ease;
+  }
+
+  /* Primary Button Styling */
+  .btn-primary {
+    background-color: #1E3A8A;
+    color: #FFFFFF;
+    border-radius: 12px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+  }
+  .btn-primary:hover {
+    background-color: #1E40AF;
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3);
+  }
+
+  /* Navigation Pills Active State */
+  .nav-pill-active {
+    background-color: #1E3A8A;
+    color: #FFFFFF !important;
+    border-radius: 14px;
+  }
+
+  /* QR Code Scanner Video Container */
+  #qr-reader video {
+    object-fit: cover !important;
+    border-radius: 16px;
+  }
+
+  /* Interactive Map styling */
+  #settings-map {
+    z-index: 10 !important;
+    border-radius: 16px;
+  }
+  .leaflet-container {
+    font-family: inherit;
+    border-radius: 16px;
+  }
+
+  /* Smooth Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  /* Document Printing & Payslip Media Queries */
+  @media print {
+    body * {
+      visibility: hidden;
+    }
+    #printable-payslip, #printable-payslip *, #printable-qr-card, #printable-qr-card * {
+      visibility: visible;
+    }
+    #printable-payslip, #printable-qr-card {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+    }
+  }
+</style>
